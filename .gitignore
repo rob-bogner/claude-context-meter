@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local user config produced by install.sh (never ship a real one)
+config.json
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,33 @@
+{
+  "language": "en",
+
+  "bands": [15, 30, 45],
+  "display_min_tokens": 6000,
+  "segments": 20,
+
+  "features": {
+    "cost": true,
+    "usage": true,
+    "git_ahead": true,
+    "sound": true
+  },
+
+  "model_windows": {
+    "opus-4-8": 1000000,
+    "fable-5": 1000000,
+    "sonnet": 200000,
+    "haiku": 200000
+  },
+
+  "prices_per_mtok": {
+    "input": 5.00,
+    "cache_write": 6.25,
+    "cache_read": 0.50,
+    "output": 25.00
+  },
+
+  "sounds": {
+    "orange": "/System/Library/Sounds/Tink.aiff",
+    "red": "/System/Library/Sounds/Sosumi.aiff"
+  }
+}
