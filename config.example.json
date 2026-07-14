@@ -1,7 +1,7 @@
 {
   "language": "en",
 
-  "output_mode": "system",
+  "output_mode": "auto",
 
   "bands": [15, 30, 45],
   "display_min_tokens": 6000,

@@ -53,12 +53,15 @@ DEFAULTS = {
     "display_min_tokens": 6000,     # stay silent below this absolute context load
     "segments": 20,                 # bar length (20 × 5% = 5% resolution)
     # How the block reaches the chat:
-    #   "system" — one systemMessage; shown once, assistant does NOT repeat it.
-    #              Looks identical in the IDE and the terminal. (recommended)
-    #   "block"  — decision:block; the assistant re-emits the block. Renders as a
-    #              chat bubble in the IDE, but the CLI also shows the hook feedback,
-    #              so the block appears TWICE in the terminal.
-    "output_mode": "system",
+    #   "auto"   — detect the client and pick the right mode (recommended):
+    #              IDE extensions render decision:block as a clean chat bubble;
+    #              the terminal CLI shows the hook feedback too, so it uses a
+    #              systemMessage instead to avoid a double block.
+    #   "block"  — always decision:block. Chat bubble in the IDE, but DOUBLES in
+    #              the terminal (the CLI shows the hook feedback and the reply).
+    #   "system" — always a systemMessage. Once in the terminal, but the IDE
+    #              extension renders it only partially.
+    "output_mode": "auto",
     "features": {
         "cost": True,
         "usage": True,
@@ -120,6 +123,22 @@ def load_config():
 
 
 KNOWN_WINDOWS = (200_000, 1_000_000)   # known window tiers for the empirical safety net
+
+# IDE entrypoints that render decision:block as a clean chat bubble and do NOT
+# separately show the hook feedback. Everything else (terminal CLI, SSH, tmux…)
+# shows the feedback too, so we use systemMessage there. Matched as substrings of
+# CLAUDE_CODE_ENTRYPOINT (e.g. "claude-vscode").
+_IDE_ENTRYPOINTS = ("vscode", "jetbrains", "intellij", "pycharm", "idea")
+
+
+def resolve_output_mode(cfg):
+    """Return 'block' or 'system'. With output_mode="auto" (default), pick by the
+    client: IDE extension -> 'block', terminal -> 'system'. Explicit values win."""
+    mode = cfg.get("output_mode", "auto")
+    if mode in ("block", "system"):
+        return mode
+    ep = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").lower()
+    return "block" if any(k in ep for k in _IDE_ENTRYPOINTS) else "system"
 
 
 # ---------------------------------------------------------------------------
@@ -429,13 +448,11 @@ def main():
     usage_line = usage_block(bands, cfg["segments"], t) if feats.get("usage", True) else None
 
     block = build_block(cfg, t, tokens, window, cost, ahead, usage_line)
-    if cfg.get("output_mode", "system") == "block":
-        # Assistant re-emits the block. Nice chat bubble in the IDE, but the CLI
-        # also renders the hook feedback -> the block shows up twice there.
+    if resolve_output_mode(cfg) == "block":
+        # IDE: assistant re-emits the block as a chat bubble (shown once there).
         out = {"decision": "block", "reason": t("instruction").format(block=block)}
     else:
-        # Shown once as a system message; the assistant is not asked to repeat it.
-        # Same result in the IDE and the terminal.
+        # Terminal: one systemMessage; the assistant is not asked to repeat it.
         out = {"systemMessage": block}
     print(json.dumps(out))
 
