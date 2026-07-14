@@ -33,9 +33,24 @@ hook puts an honest, always-current readout right in the chat, and it detects th
 
 - Claude Code (CLI, or the VS Code / JetBrains extension)
 - `python3` (standard library only — no pip installs)
-- `jq` (used by the installer to patch `settings.json` safely)
-- Line 2 (subscription usage) is **macOS only** and optional; everything else is
-  cross-platform.
+- `jq` and `git` (used by the installer)
+
+## Platform support
+
+Developed and tested on **macOS**. The core is plain Python + `git` with no
+OS-specific code, so it should run anywhere Claude Code does — but only macOS is
+verified. Two features are macOS-specific and degrade quietly elsewhere (they
+never crash the hook):
+
+| Part | macOS | Linux | Windows |
+|------|:-----:|:-----:|:-------:|
+| Context block — line 1 (context %, window, cost, unpushed commits) | ✅ | ✅ expected | ✅ expected |
+| Subscription usage — line 2 | ✅ (Keychain) | env token only¹ | env token only¹ |
+| Sound on band-up | ✅ (`afplay`) | — | — |
+| Installer (`install.sh` / `bootstrap.sh`, bash) | ✅ | ✅ | via WSL / Git Bash |
+
+¹ Line 2 reads the OAuth token from the macOS Keychain. On other platforms, set
+`CONTEXT_METER_OAUTH_TOKEN` to enable it, or leave `features.usage = false`.
 
 ## Installation
 
