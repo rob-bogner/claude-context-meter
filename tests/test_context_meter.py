@@ -135,6 +135,24 @@ def test_cost():
         os.remove(p)
 
 
+def test_client_and_output_mode():
+    old = os.environ.get("CLAUDE_CODE_ENTRYPOINT")
+    try:
+        os.environ["CLAUDE_CODE_ENTRYPOINT"] = "claude-vscode"
+        check("vscode -> ide", cm.current_client() == "ide")
+        check("auto+ide -> block", cm.resolve_output_mode({"output_mode": "auto"}) == "block")
+        os.environ["CLAUDE_CODE_ENTRYPOINT"] = "cli"
+        check("cli -> terminal", cm.current_client() == "terminal")
+        check("auto+terminal -> system", cm.resolve_output_mode({"output_mode": "auto"}) == "system")
+        check("explicit block wins", cm.resolve_output_mode({"output_mode": "block"}) == "block")
+        check("explicit system wins", cm.resolve_output_mode({"output_mode": "system"}) == "system")
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        else:
+            os.environ["CLAUDE_CODE_ENTRYPOINT"] = old
+
+
 def run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

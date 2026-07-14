@@ -62,6 +62,10 @@ DEFAULTS = {
     #   "system" — always a systemMessage. Once in the terminal, but the IDE
     #              extension renders it only partially.
     "output_mode": "auto",
+    # Where the block is shown at all. Values: "ide" (VS Code / JetBrains) and
+    # "terminal" (CLI, SSH, tmux…). Default is both. Set to ["ide"] to keep the
+    # block in the IDE only, or ["terminal"] for the terminal only.
+    "clients": ["ide", "terminal"],
     "features": {
         "cost": True,
         "usage": True,
@@ -131,14 +135,20 @@ KNOWN_WINDOWS = (200_000, 1_000_000)   # known window tiers for the empirical sa
 _IDE_ENTRYPOINTS = ("vscode", "jetbrains", "intellij", "pycharm", "idea")
 
 
+def current_client():
+    """'ide' (VS Code / JetBrains) or 'terminal' (everything else), from
+    CLAUDE_CODE_ENTRYPOINT (e.g. 'claude-vscode' -> 'ide', 'cli' -> 'terminal')."""
+    ep = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").lower()
+    return "ide" if any(k in ep for k in _IDE_ENTRYPOINTS) else "terminal"
+
+
 def resolve_output_mode(cfg):
     """Return 'block' or 'system'. With output_mode="auto" (default), pick by the
     client: IDE extension -> 'block', terminal -> 'system'. Explicit values win."""
     mode = cfg.get("output_mode", "auto")
     if mode in ("block", "system"):
         return mode
-    ep = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").lower()
-    return "block" if any(k in ep for k in _IDE_ENTRYPOINTS) else "system"
+    return "block" if current_client() == "ide" else "system"
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +417,10 @@ def main():
         return
 
     cfg = load_config()
+    # Client gate: stay silent where the user doesn't want the block (e.g. ["ide"]).
+    clients = cfg.get("clients") or ["ide", "terminal"]
+    if isinstance(clients, list) and current_client() not in clients:
+        return
     t = translator(cfg.get("language"))
     bands = cfg["bands"]
     feats = cfg.get("features", {})

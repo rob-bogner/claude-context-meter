@@ -32,6 +32,22 @@ feedback (so `block` appears twice) but renders a `systemMessage` cleanly. `auto
 gives each client the one that looks right. Override only if detection is wrong
 for your setup.
 
+### `clients` — array of strings, default `["ide", "terminal"]`
+Where the block is shown at all. The hook reads `CLAUDE_CODE_ENTRYPOINT` and
+classifies the current client as:
+
+- `"ide"` — the VS Code / JetBrains extensions (`claude-vscode`, …)
+- `"terminal"` — everything else (the CLI, SSH, tmux, …)
+
+Only listed clients get the block; in any other client the hook stays silent.
+
+- Both (default): `["ide", "terminal"]`
+- **IDE only:** `["ide"]` — nothing in the terminal
+- Terminal only: `["terminal"]`
+
+This is independent of [`output_mode`](#output_mode-string-default-auto): `clients`
+decides *whether* the block appears, `output_mode` decides *how* it renders.
+
 ### `bands` — `[int, int, int]`, default `[15, 30, 45]`
 The yellow / orange / red thresholds in **percent of context used**. Below the
 first value the meter is green. These drive the leading emoji, the bar colors, the

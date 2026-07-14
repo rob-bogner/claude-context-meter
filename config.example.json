@@ -2,6 +2,7 @@
   "language": "en",
 
   "output_mode": "auto",
+  "clients": ["ide", "terminal"],
 
   "bands": [15, 30, 45],
   "display_min_tokens": 6000,
