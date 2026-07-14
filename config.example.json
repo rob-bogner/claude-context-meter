@@ -1,6 +1,8 @@
 {
   "language": "en",
 
+  "output_mode": "system",
+
   "bands": [15, 30, 45],
   "display_min_tokens": 6000,
   "segments": 20,

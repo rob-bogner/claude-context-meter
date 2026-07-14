@@ -13,6 +13,20 @@ Output language for the block. Ships with `"en"` and `"de"`. Add more by editing
 `i18n.py` (copy the `en` block, translate the values). Does not affect the
 numbers, only the words.
 
+### `output_mode` — string, default `"system"`
+How the block reaches the chat:
+
+- `"system"` *(recommended)* — the hook returns a `systemMessage`. The block is
+  shown **once**, and the assistant is **not** asked to repeat it. Looks the same
+  in the VS Code / JetBrains extension and in the terminal CLI.
+- `"block"` — the hook returns `decision:block` and the assistant re-emits the
+  block. In the IDE this renders as a normal chat bubble. **In the terminal the
+  CLI also displays the hook feedback, so the block appears twice** — use
+  `"system"` there.
+
+If you upgraded and suddenly see the block **twice** in the terminal, set this to
+`"system"` (or update — it is the new default).
+
 ### `bands` — `[int, int, int]`, default `[15, 30, 45]`
 The yellow / orange / red thresholds in **percent of context used**. Below the
 first value the meter is green. These drive the leading emoji, the bar colors, the

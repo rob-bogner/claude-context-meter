@@ -172,6 +172,7 @@ change. Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `language` | `"en"` | Output language (`en` / `de`; add your own in `i18n.py`) |
+| `output_mode` | `"system"` | `"system"` shows the block once (IDE + terminal); `"block"` re-emits it (doubles in the terminal) |
 | `bands` | `[15, 30, 45]` | Yellow / orange / red thresholds in % |
 | `display_min_tokens` | `6000` | Stay silent below this context load (absolute tokens) |
 | `segments` | `20` | Number of cells in the bar (20 = 5% resolution) |

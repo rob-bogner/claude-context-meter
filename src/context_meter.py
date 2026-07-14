@@ -52,6 +52,13 @@ DEFAULTS = {
     "bands": [15, 30, 45],          # green <15 · yellow 15–30 · orange 30–45 · red ≥45
     "display_min_tokens": 6000,     # stay silent below this absolute context load
     "segments": 20,                 # bar length (20 × 5% = 5% resolution)
+    # How the block reaches the chat:
+    #   "system" — one systemMessage; shown once, assistant does NOT repeat it.
+    #              Looks identical in the IDE and the terminal. (recommended)
+    #   "block"  — decision:block; the assistant re-emits the block. Renders as a
+    #              chat bubble in the IDE, but the CLI also shows the hook feedback,
+    #              so the block appears TWICE in the terminal.
+    "output_mode": "system",
     "features": {
         "cost": True,
         "usage": True,
@@ -422,8 +429,15 @@ def main():
     usage_line = usage_block(bands, cfg["segments"], t) if feats.get("usage", True) else None
 
     block = build_block(cfg, t, tokens, window, cost, ahead, usage_line)
-    reason = t("instruction").format(block=block)
-    print(json.dumps({"decision": "block", "reason": reason}))
+    if cfg.get("output_mode", "system") == "block":
+        # Assistant re-emits the block. Nice chat bubble in the IDE, but the CLI
+        # also renders the hook feedback -> the block shows up twice there.
+        out = {"decision": "block", "reason": t("instruction").format(block=block)}
+    else:
+        # Shown once as a system message; the assistant is not asked to repeat it.
+        # Same result in the IDE and the terminal.
+        out = {"systemMessage": block}
+    print(json.dumps(out))
 
 
 if __name__ == "__main__":
