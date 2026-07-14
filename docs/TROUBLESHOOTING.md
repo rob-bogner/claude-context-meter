@@ -35,6 +35,31 @@ prior block (long tool chains), later stops carry `stop_hook_active: true` and t
 hook stays quiet by design until your next message. See
 [HOW-IT-WORKS.md](HOW-IT-WORKS.md#the-loop-guard).
 
+## Two blocks appear (an old and a new one)
+
+You installed over an **earlier version** that was registered under a different
+name (e.g. `session-context-alarm.py`). Both Stop hooks now fire, so you see two
+blocks — often in different languages or formats.
+
+The installer detects this and warns. To remove the earlier hook automatically:
+
+```bash
+./install.sh --replace-legacy
+# one-liner:
+curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --replace-legacy
+```
+
+To see what's registered and remove an old entry by hand:
+
+```bash
+jq -r '.hooks.Stop[]?.hooks[]?.command' ~/.claude/settings.json
+# keep only context_meter.py, drop the rest (safe only if you have no other intentional Stop hooks):
+tmp=$(mktemp); jq '.hooks.Stop = ([.hooks.Stop[] | .hooks = ((.hooks//[]) | map(select(.command|contains("context_meter.py")))) ] | map(select((.hooks|length)>0)))' ~/.claude/settings.json > "$tmp" && mv "$tmp" ~/.claude/settings.json
+```
+
+`--replace-legacy` only removes hooks whose command looks like a context meter
+(`context`/`ctx` + `alarm`/`meter`/`monitor`/…); unrelated Stop hooks are kept.
+
 ## The window is wrong (shows 200k on a 1M model, or vice versa)
 
 The hook maps the **transcript model id** to a window via `model_windows`. If your

@@ -58,6 +58,13 @@ and registers the hook. **Running the exact same command again updates** to the
 latest version and keeps your config. Then start a new session — the block appears
 after the assistant's next reply.
 
+Upgrading from an earlier, differently-named version and seeing **two blocks**?
+Add `--replace-legacy` to remove the old hook:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --replace-legacy
+```
+
 > ⚠️ Piping a script into `bash` runs remote code. To read it first:
 > `curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh -o bootstrap.sh`,
 > inspect it, then `bash bootstrap.sh`.

@@ -8,19 +8,26 @@
 #      (only if it does not exist yet — your settings are never overwritten)
 #   3. Registers the Stop hook in ~/.claude/settings.json (idempotent; leaves any
 #      other hooks untouched; backs up settings.json first)
-#   4. With --with-statusline: also wires up the optional status line
+#   4. Warns if another Stop hook looks like an EARLIER context meter (a prior
+#      install under a different name) that would run alongside this one
+#   5. With --with-statusline: also wires up the optional status line
 #
 # Usage:
-#   ./install.sh [--with-statusline] [--timeout N]
+#   ./install.sh [--with-statusline] [--timeout N] [--replace-legacy]
+#
+#   --replace-legacy   remove detected earlier context-meter Stop hooks instead
+#                      of only warning about them
 #
 # Re-running is safe: it updates the existing entry instead of duplicating it.
 set -euo pipefail
 
 WITH_STATUSLINE=0
+REPLACE_LEGACY=0
 TIMEOUT=10
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-statusline) WITH_STATUSLINE=1; shift ;;
+    --replace-legacy) REPLACE_LEGACY=1; shift ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -81,6 +88,40 @@ if [ "$WITH_STATUSLINE" -eq 1 ]; then
     .statusLine = { "type": "command", "command": $cmd, "padding": 1 }
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "→ Registered status line (sensor + display)"
+fi
+
+# --- detect / handle earlier context-meter hooks ----------------------------
+# A previous version installed under a different name (e.g. session-context-alarm.py)
+# would keep firing next to ours -> two blocks. Detect Stop-hook commands that look
+# like a context meter (context/ctx + alarm/meter/monitor/gauge/hud) but are NOT
+# ours. --replace-legacy removes them; otherwise we only warn.
+LEGACY_RE='(context|ctx).*(alarm|meter|monitor|gauge|hud)'
+legacy=$(jq -r --arg re "$LEGACY_RE" '
+  .hooks.Stop[]?.hooks[]?.command
+  | select(test("context_meter\\.py") | not)
+  | select(test($re; "i"))
+' "$SETTINGS" 2>/dev/null | sort -u || true)
+
+if [ -n "$legacy" ]; then
+  if [ "$REPLACE_LEGACY" -eq 1 ]; then
+    tmp="$(mktemp)"
+    jq --arg re "$LEGACY_RE" '
+      .hooks.Stop = ([ .hooks.Stop[]
+        | .hooks = ((.hooks // []) | map(select(
+            (.command | test("context_meter\\.py"))          # keep ours
+            or ((.command | test($re; "i")) | not)           # keep anything not meter-like
+          )))
+      ] | map(select((.hooks | length) > 0)))
+    ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    echo "→ Removed earlier context-meter Stop hook(s):"
+    echo "$legacy" | sed 's/^/    /'
+  else
+    echo ""
+    echo "⚠️  Another Stop hook looks like an EARLIER context meter and will run"
+    echo "    alongside this one (you'd see two blocks per reply):"
+    echo "$legacy" | sed 's/^/      /'
+    echo "    Re-run with --replace-legacy to remove it, or delete it by hand."
+  fi
 fi
 
 # --- verify -----------------------------------------------------------------
