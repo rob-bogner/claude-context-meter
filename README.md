@@ -39,7 +39,34 @@ hook puts an honest, always-current readout right in the chat, and it detects th
 
 ## Installation
 
-### Step 0 — Check the prerequisites
+### Quick install (one line)
+
+Requires `python3`, `jq`, and `git` (macOS or Linux; bash or zsh):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash
+```
+
+With the optional status line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --with-statusline
+```
+
+That clones the repo to `~/.local/share/claude-context-meter`, runs the installer,
+and registers the hook. **Running the exact same command again updates** to the
+latest version and keeps your config. Then start a new session — the block appears
+after the assistant's next reply.
+
+> ⚠️ Piping a script into `bash` runs remote code. To read it first:
+> `curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh -o bootstrap.sh`,
+> inspect it, then `bash bootstrap.sh`.
+
+### Manual install
+
+Prefer to clone and inspect everything yourself? Do it in four steps.
+
+#### Step 0 — Check the prerequisites
 
 ```bash
 python3 --version     # any Python 3
@@ -47,14 +74,14 @@ jq --version          # e.g. brew install jq
 claude --version      # Claude Code installed and logged in
 ```
 
-### Step 1 — Clone the repository
+#### Step 1 — Clone the repository
 
 ```bash
 git clone https://github.com/rob-bogner/claude-context-meter.git
 cd claude-context-meter
 ```
 
-### Step 2 — Run the installer
+#### Step 2 — Run the installer
 
 ```bash
 ./install.sh
@@ -84,7 +111,7 @@ The installer:
    untouched, and re-running never creates duplicates;
 4. compiles the scripts and validates the JSON to confirm a clean install.
 
-### Step 3 — Verify
+#### Step 3 — Verify
 
 Start a new Claude Code session (or just send a message). After the assistant
 replies, the context block appears. To confirm the hook is registered:
@@ -105,11 +132,19 @@ You should see a JSON object containing `"decision":"block"`.
 
 ### Updating
 
+If you used the one-line install, just run it again:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash
+```
+
+If you cloned manually:
+
 ```bash
 cd claude-context-meter && git pull && ./install.sh
 ```
 
-Re-running the installer refreshes the scripts and keeps your `config.json`.
+Either way, the scripts are refreshed and your `config.json` is kept.
 
 ### Uninstalling
 
