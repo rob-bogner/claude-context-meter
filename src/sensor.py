@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""claude-context-meter — der Sensor (Status-Line-Kommando).
+"""claude-context-meter — the sensor (status-line command).
 
-Claude Code übergibt dem Status-Line-Kommando bei jeder neuen Assistant-Nachricht
-ein JSON auf stdin, das die einzigen autoritativen Laufzeitwerte der Session
-enthält — allen voran `context_window.context_window_size`, die REALE Fenster-
-größe. Kein Hook-Event enthält diesen Wert, und die Modell-ID im Transcript kann
-200k und 1M nicht unterscheiden (sie trägt kein `[1m]`-Suffix). Deshalb ist diese
-Datei die Grundlage des gesamten Projekts: sie misst, alles andere rendert nur.
+On every new assistant message Claude Code hands the status-line command a JSON
+object on stdin containing the only authoritative runtime values of the session
+— above all `context_window.context_window_size`, the REAL window size. No hook
+event carries that value, and the model id in the transcript cannot tell 200k
+from 1M (it has no `[1m]` suffix). This file is therefore the foundation of the
+whole project: it measures, everything else merely renders.
 
-Zwei Aufgaben:
+Two jobs:
 
-  1. SENSOR — schreibt den vollständigen Zustand als JSON nach
-     ~/.claude/context-meter/state/<session_id>.json (atomar via tmp+rename,
-     damit ein gleichzeitig lesender Hook nie eine halbe Datei sieht) sowie
-     nach state/last.json, damit der SessionStart-Hook schon vor dem ersten
-     Turn etwas anzeigen kann.
+  1. SENSOR — writes the complete state as JSON to
+     ~/.claude/context-meter/state/<session_id>.json (atomically via tmp+rename,
+     so a hook reading concurrently never sees half a file) and to
+     state/last.json, so the SessionStart hook has something to show before the
+     first turn.
 
-  2. ANZEIGE — gibt eine kompakte Zeile aus. Terminals rendern sie; die
-     VS-Code-Extension zeigt derzeit keine Status-Line, dort zählt allein
-     der Seiteneffekt aus (1).
+  2. DISPLAY — prints a compact line. Terminals render it; the VS Code extension
+     currently shows no status line, so there only the side effect from (1)
+     counts.
 
-Bewusst ohne `jq`: reines Python3 spart eine Abhängigkeit, die auf frischen
-Systemen oft fehlt, und kostet nur ~40 ms pro Aufruf (Status-Line-Updates sind
-auf 300 ms entprellt).
+Deliberately without `jq`: plain Python 3 saves a dependency that is often
+missing on fresh systems, and costs only ~40 ms per call (status-line updates
+are debounced by 300 ms).
 
-Der Sensor schreibt NUR, was Claude Code selbst geliefert hat. Fehlt ein Feld,
-bleibt es `null` — es wird nichts geschätzt, geraten oder aus dem Modellnamen
-abgeleitet. Genau daran hängt die Modellunabhängigkeit: ein künftiges Modell
-mit unbekanntem Namen liefert seine Fenstergröße hier trotzdem korrekt mit.
+The sensor writes ONLY what Claude Code supplied. A missing field stays `null` —
+nothing is estimated, guessed, or derived from the model name. Model
+independence hangs on exactly that: a future model with an unknown name still
+reports its window size correctly here.
 """
 import sys, os, json, time
 
@@ -43,7 +43,7 @@ def _num(x):
 
 
 def _dig(d, *path):
-    """Verschachtelten Wert holen; None, sobald ein Glied fehlt oder kein dict ist."""
+    """Fetch a nested value; None as soon as a link is missing or not a dict."""
     for key in path:
         if not isinstance(d, dict):
             return None
@@ -52,9 +52,9 @@ def _dig(d, *path):
 
 
 def _window(cw):
-    """Fenstergröße: bevorzugt das explizite Feld, sonst aus Tokens und Prozent
-    zurückgerechnet (Claude Code liefert `used_percentage` auch dann, wenn
-    `context_window_size` in einer älteren Version noch fehlt)."""
+    """Window size: prefer the explicit field, otherwise reconstruct it from
+    tokens and percentage (Claude Code supplies `used_percentage` even where an
+    older version still lacks `context_window_size`)."""
     w = _num(_dig(cw, "context_window_size"))
     if w and w > 0:
         return int(w)
@@ -65,7 +65,7 @@ def _window(cw):
 
 
 def _limits(rl):
-    """rate_limits auf das Nötige eindampfen. `resets_at` ist Unix-Epoch-Sekunden."""
+    """Reduce rate_limits to what is needed. `resets_at` is Unix epoch seconds."""
     out = {}
     for key in ("five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"):
         w = _dig(rl, key)
@@ -84,20 +84,20 @@ def build_state(ev):
         "schema": SCHEMA,
         "ts": time.time(),
         "session_id": ev.get("session_id"),
-        # --- die autoritativen Werte ---
+        # --- the authoritative values ---
         "window": _window(cw),
         "tokens_in": _num(cw.get("total_input_tokens")),
         "tokens_out": _num(cw.get("total_output_tokens")),
         "used_pct": _num(cw.get("used_percentage")),
         "exceeds_200k": ev.get("exceeds_200k_tokens"),
-        # --- Modell: Anzeige-Name und ID, NICHT zur Fensterableitung ---
+        # --- model: display name and id, NOT for deriving the window ---
         "model_id": _dig(ev, "model", "id"),
         "model_name": _dig(ev, "model", "display_name"),
-        # --- Kosten rechnet Claude Code selbst; keine eigene Preistabelle nötig ---
+        # --- Claude Code computes the cost itself; no local price table needed ---
         "cost_usd": _num(_dig(ev, "cost", "total_cost_usd")),
-        # --- Abo-Verbrauch: ersetzt den OAuth-/Keychain-Weg vollständig ---
+        # --- subscription usage: fully replaces the OAuth/keychain path ---
         "rate_limits": _limits(_dig(ev, "rate_limits")),
-        # --- Kontext fürs Rendern ---
+        # --- context for rendering ---
         "effort": _dig(ev, "effort", "level"),
         "fast_mode": ev.get("fast_mode"),
         "thinking": _dig(ev, "thinking", "enabled"),
@@ -108,8 +108,8 @@ def build_state(ev):
 
 
 def write_state(state):
-    """Atomar schreiben: erst tmp, dann rename. os.replace ist auf POSIX atomar,
-    ein parallel lesender Stop-Hook sieht also immer eine vollständige Datei."""
+    """Write atomically: tmp first, then rename. os.replace is atomic on POSIX,
+    so a Stop hook reading in parallel always sees a complete file."""
     sid = state.get("session_id")
     if not sid:
         return
@@ -123,11 +123,11 @@ def write_state(state):
                 f.write(blob)
             os.replace(tmp, path)
     except Exception:
-        pass  # Ein Sensorfehler darf die Status-Line nie zum Absturz bringen.
+        pass  # A sensor failure must never bring the status line down.
 
 
 # ---------------------------------------------------------------------------
-# Anzeige (nur dort sichtbar, wo Claude Code eine Status-Line rendert)
+# Display (visible only where Claude Code renders a status line)
 # ---------------------------------------------------------------------------
 DIM, RESET = "\033[2m", "\033[0m"
 GREEN, YELLOW, RED = "\033[32m", "\033[33m", "\033[31m"

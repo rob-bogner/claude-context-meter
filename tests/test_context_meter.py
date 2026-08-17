@@ -28,7 +28,7 @@ PRICES = {"default": {"input": 5.0, "output": 25.0},
 OFFLINE = {"bands": BANDS, "segments": 20, "use_models_api": False}
 
 
-def _transcript(model="claude-opus-4-8", tokens=(2, 30000, 5000)):
+def _transcript(model="claude-opus-4-8", tokens=(2, 30000, 5000), effort=None):
     """Write a minimal JSONL transcript with one assistant usage line."""
     inp, cr, cw = tokens
     line = {
@@ -43,6 +43,9 @@ def _transcript(model="claude-opus-4-8", tokens=(2, 30000, 5000)):
             },
         }
     }
+    if effort:
+        # Claude Code records the effort as a TOP-LEVEL field, beside "message".
+        line["effort"] = effort
     fd, path = tempfile.mkstemp(suffix=".jsonl")
     with os.fdopen(fd, "w") as f:
         f.write(json.dumps(line) + "\n")
@@ -157,6 +160,58 @@ def test_cascade_s5_unknown_never_alarms():
         line, hint = cm.context_line(ctx, OFFLINE, translator("en"), None, 0)
         check("S5 line shows no percent sign", "%" not in line)
         check("S5 reports the tokens", "201k" in line)
+
+
+def test_effort_comes_from_the_transcript_without_a_sensor():
+    """In an IDE no status line runs, so the sensor never writes and every level
+    below S1 used to drop the effort from line 1. It is a top-level field on
+    each assistant entry, so it is available regardless."""
+    p = _transcript(model="claude-opus-5", tokens=(2, 30000, 5000), effort="xhigh")
+    try:
+        check("last_effort reads the top-level field", cm.last_effort(p) == "xhigh")
+    finally:
+        os.remove(p)
+    p = _transcript(model="claude-opus-5", tokens=(2, 30000, 5000))
+    try:
+        check("no effort in the transcript, no guess", cm.last_effort(p) is None)
+    finally:
+        os.remove(p)
+
+
+def test_effort_survives_every_cascade_level():
+    t = translator("en")
+    with _State() as d:
+        # S1 — the sensor's own effort wins.
+        _sensor(d, effort="high")
+        ctx = cx.resolve("sess", OFFLINE, transcript_tokens=1, transcript_effort="xhigh")
+        check("S1 prefers the sensor's effort", ctx.effort == "high")
+        # S1 — sensor without an effort field falls back to the transcript.
+        _sensor(d)
+        ctx = cx.resolve("sess", OFFLINE, transcript_tokens=1, transcript_effort="xhigh")
+        check("S1 falls back to the transcript", ctx.effort == "xhigh")
+    with _State():
+        cfg = dict(OFFLINE, window_override=1_000_000)
+        ctx = cx.resolve("none", cfg, transcript_tokens=120_000, transcript_effort="xhigh")
+        check("S3 keeps the effort", ctx.effort == "xhigh")
+        check("S3 renders it", "effort xhigh" in cm.model_line(ctx, t))
+    with _State():
+        ctx = cx.resolve("none", OFFLINE, transcript_tokens=201_000, transcript_effort="xhigh")
+        check("S5 keeps the effort", ctx.effort == "xhigh")
+        check("S5 renders it", "effort xhigh" in cm.model_line(ctx, t))
+
+
+def test_cache_files_are_not_sensor_readings():
+    """models.json and usage-cache.json live in the same directory. Counting
+    them as readings made a fresh install look like a broken one."""
+    with _State() as d:
+        check("empty state: never wrote", not cx.sensor_ever_wrote())
+        with open(os.path.join(d, "models.json"), "w") as f:
+            json.dump({"claude-x": {"ts": 0}}, f)
+        with open(os.path.join(d, "usage-cache.json"), "w") as f:
+            json.dump({"at": 0}, f)
+        check("caches only: still never wrote", not cx.sensor_ever_wrote())
+        _sensor(d)
+        check("a real reading counts", cx.sensor_ever_wrote())
 
 
 def test_floor_is_a_lower_bound_only():

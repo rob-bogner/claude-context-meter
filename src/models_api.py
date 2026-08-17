@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
-"""claude-context-meter — Modell-Kapazität aus Anthropics Models API.
+"""claude-context-meter — model capacity from Anthropic's Models API.
 
-`GET /v1/models/{id}` liefert `max_input_tokens` — die maximale Fenstergröße
-eines Modells, direkt von Anthropic. Das ist die faktische Antwort auf die
-Frage, die keine lokale Tabelle dauerhaft beantworten kann:
+`GET /v1/models/{id}` returns `max_input_tokens` — a model's maximum window
+size, straight from Anthropic. That is the factual answer to the question no
+local table can keep answering:
 
     claude-opus-5      → 1000000
     claude-sonnet-5    → 1000000
     claude-haiku-4-5   →  200000
 
-Ein künftiges Modell liefert seinen Wert genauso mit — es gibt hier nichts zu
-pflegen und nichts, das veralten kann.
+A future model reports its value the same way — there is nothing to maintain
+here and nothing that can go stale.
 
-Auth: derselbe OAuth-Token, mit dem Claude Code selbst arbeitet (macOS-Keychain,
-Dienst „Claude Code-credentials"). Verifiziert: der Token darf `/v1/models`
-lesen (HTTP 200). Ohne Token oder ohne Netz wird still auf den Cache
-zurückgefallen.
+Auth: the same OAuth token Claude Code itself uses (macOS keychain, service
+"Claude Code-credentials"). Verified: the token may read `/v1/models` (HTTP 200).
+Without a token or without network access this falls back to the cache silently.
 
-Caching ist aggressiv (Standard 7 Tage): Modellkapazitäten ändern sich praktisch
-nie, und ein Stop-Hook darf keine Netzlatenz pro Turn erzeugen. Der erste Abruf
-je Modell-ID kostet einen Request, danach nichts mehr.
+Caching is aggressive (7 days by default): model capacities practically never
+change, and a Stop hook must not add network latency to every turn. The first
+lookup per model id costs one request, everything after that is free.
 
-WICHTIG — was diese Datei NICHT tut: Sie beantwortet nur „wie groß KANN das
-Modell?". Ob die laufende Session dieses Maximum auch nutzt, entscheidet der
-Client; diese Regeln stehen in `client_rules.py`.
+IMPORTANT — what this file does NOT do: it only answers "how large CAN the model
+be?". Whether the running session actually uses that maximum is the client's
+decision; those rules live in `client_rules.py`.
 """
 import os, json, time, subprocess, urllib.request, urllib.error
 
@@ -37,9 +36,9 @@ API_URL = "https://api.anthropic.com/v1/models/%s"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 KEYCHAIN_ACCOUNT = "claude-code-user"
 
-TTL_OK = 7 * 24 * 3600      # bekannte Kapazität: eine Woche
-TTL_MISS = 6 * 3600         # unbekannte ID (404/Fehler): früher erneut versuchen
-HTTP_TIMEOUT = 2.5          # ein Hook darf nie hängen
+TTL_OK = 7 * 24 * 3600      # known capacity: one week
+TTL_MISS = 6 * 3600         # unknown id (404/error): retry sooner
+HTTP_TIMEOUT = 2.5          # a hook must never hang
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +69,7 @@ def _keychain(account=None):
 
 
 def get_token():
-    """Gültigen Bearer-Token liefern, sonst None."""
+    """Return a valid bearer token, or None."""
     tok = os.environ.get("CONTEXT_METER_OAUTH_TOKEN")
     if tok and tok.strip():
         return tok.strip()
@@ -113,7 +112,7 @@ def _write_cache(cache):
 
 
 # ---------------------------------------------------------------------------
-# Abruf
+# Lookup
 # ---------------------------------------------------------------------------
 def _fetch(model_id, token):
     req = urllib.request.Request(
@@ -130,17 +129,17 @@ def _fetch(model_id, token):
 
 
 def max_input_tokens(model_id, allow_network=True):
-    """Maximale Fenstergröße für `model_id`, oder None.
+    """Maximum window size for `model_id`, or None.
 
-    Reihenfolge: frischer Cache → Netz → alter Cache. Ein Netzfehler ist nie
-    fatal; im Zweifel liefert die Funktion None und der Aufrufer zeigt ehrlich
-    „unbekannt" statt einer erfundenen Zahl.
+    Order: fresh cache → network → stale cache. A network error is never fatal;
+    in doubt the function returns None and the caller honestly shows "unknown"
+    instead of an invented number.
     """
     if not model_id:
         return None
-    # Claude Code hängt Varianten-Suffixe an, die die API nicht kennt
-    # (`claude-opus-5[1m]` → 404). Für die Kapazitätsfrage zählt die Basis-ID;
-    # das Suffix wertet `client_rules.py` getrennt aus.
+    # Claude Code appends variant suffixes the API does not know
+    # (`claude-opus-5[1m]` → 404). For the capacity question the base id is what
+    # counts; the suffix is evaluated separately by `client_rules.py`.
     base = model_id.split("[")[0].strip()
 
     cache = _read_cache()
@@ -169,8 +168,8 @@ def max_input_tokens(model_id, allow_network=True):
             _write_cache(cache)
             return cache[base]["max_input_tokens"]
         except urllib.error.HTTPError as e:
-            # 404 = ID unbekannt (z. B. Client-Alias). Negativ cachen, damit
-            # nicht jeder Turn erneut anfragt.
+            # 404 = unknown id (e.g. a client-side alias). Cache the miss so not
+            # every turn asks again.
             if e.code == 404:
                 cache[base] = {"ts": now, "max_input_tokens": None, "error": 404}
                 _write_cache(cache)
@@ -182,7 +181,7 @@ def max_input_tokens(model_id, allow_network=True):
 
 
 def display_name(model_id):
-    """Anzeigename aus dem Cache (z. B. „Claude Opus 5"), sonst None."""
+    """Display name from the cache (e.g. "Claude Opus 5"), otherwise None."""
     if not model_id:
         return None
     hit = _read_cache().get(model_id.split("[")[0].strip())

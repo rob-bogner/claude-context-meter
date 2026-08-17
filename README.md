@@ -276,6 +276,14 @@ out `context_window.context_window_size`. `sensor.py` records it (plus tokens,
 model, cost and rate limits) as JSON; the hook only renders. Install it and the
 meter stops computing anything it can measure.
 
+> **In an IDE, expect S4, not S1.** The VS Code and JetBrains extensions render
+> no status line, so the sensor never runs there and no sensor file is ever
+> written — `doctor` reports "Sensor data: none yet". That is not a fault: the
+> window is resolved from facts at S4 instead, and the block is complete. What
+> you lose is Claude Code's own token count and cost, which are reconstructed
+> from the transcript rather than measured. In a terminal session the status
+> line does run and the meter moves to S1.
+
 **S4 — facts, not a table.** Without a sensor, two facts combine:
 `GET /v1/models/{id}` returns `max_input_tokens` for the transcript's model id,
 and `client_rules.py` reproduces Claude Code's own window rule (de-minified from

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""claude-context-meter — SessionStart-Hook: zeigt Modell und Fenster beim Start.
+"""claude-context-meter — SessionStart hook: shows model and window at startup.
 
-Ausgabe als `systemMessage`, die Claude Code dem Nutzer anzeigt:
+Printed as a `systemMessage`, which Claude Code shows to the user:
 
-    🧠 Session läuft auf Opus 5 · 1M Fenster
+    🧠 Session running on Opus 5 · 1M window
 
-Woher der Wert kommt, in dieser Reihenfolge:
+Where the value comes from, in this order:
 
-  1. Das optionale `model`-Feld des SessionStart-Events. Laut Doku ist
-     SessionStart das EINZIGE Event, das ein Modell mitliefern kann — garantiert
-     ist es nicht, deshalb nur als erster Versuch.
-  2. Der eigene Sensor. Die Status-Line läuft ebenfalls beim Session-Start; ob
-     vor oder nach diesem Hook, ist nicht festgelegt, daher wird kurz gepollt.
-  3. Der Sensor der zuletzt aktiven Session (`last.json`) — klar als Vorschau
-     gekennzeichnet, weil er ein anderes Modell zeigen kann.
+  1. The optional `model` field of the SessionStart event. Per the docs,
+     SessionStart is the ONLY event that can carry a model — it is not
+     guaranteed, so this is only the first attempt.
+  2. Our own sensor. The status line also runs at session start; whether before
+     or after this hook is not defined, so it is polled briefly.
+  3. The sensor of the most recently active session (`last.json`) — clearly
+     marked as a preview, because it may show a different model.
 
-Fehlt alles, bleibt der Hook still. Ein SessionStart-Hook, der bei jedem Start
-eine Vermutung ausgibt, wäre genau der Fehler, den dieses Projekt behebt.
+If all of that is missing, the hook stays silent. A SessionStart hook that
+prints a guess on every start would be exactly the mistake this project fixes.
 """
 import sys, os, json, time
 
@@ -35,9 +35,9 @@ CONFIG_PATH = os.environ.get(
     "CONTEXT_METER_CONFIG", os.path.join(HOME, ".claude", "context-meter", "config.json")
 )
 
-POLL_SECS = 1.2     # wie lange auf den frischen Sensor gewartet wird
+POLL_SECS = 1.2     # how long to wait for a fresh sensor
 POLL_STEP = 0.1
-LAST_MAX_AGE = 3600  # `last.json` älter als eine Stunde ist keine Vorschau wert
+LAST_MAX_AGE = 3600  # a `last.json` older than an hour is not worth previewing
 
 
 def _lang():
@@ -56,6 +56,18 @@ def _fmt_window(w):
     return "%gM" % (w / 1_000_000) if w >= 1_000_000 else "%dk" % (w // 1000)
 
 
+def _effort_from_transcript(path):
+    """The transcript carries the effort on every assistant entry, so the line
+    can show it even when the status line has not run yet."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        from context_meter import last_effort
+        return last_effort(path)
+    except Exception:
+        return None
+
+
 def _describe(name, window, effort, t):
     bits = [name]
     wl = _fmt_window(window)
@@ -67,7 +79,7 @@ def _describe(name, window, effort, t):
 
 
 def wait_for_sensor(sid):
-    """Kurz auf den Sensor der eigenen Session warten."""
+    """Wait briefly for this session's own sensor."""
     deadline = time.time() + POLL_SECS
     while time.time() < deadline:
         s = read_sensor(sid)
@@ -84,26 +96,28 @@ def main():
         return
 
     sid = ev.get("session_id")
+    tpath = ev.get("transcript_path")
     t = translator(_lang())
 
-    # 1 — Modell direkt aus dem Event (nicht garantiert vorhanden)
+    # 1 — model straight from the event (not guaranteed to be present)
     ev_model = ev.get("model")
     if isinstance(ev_model, dict):
         ev_model = ev_model.get("display_name") or ev_model.get("id")
 
-    # 2 — eigener Sensor
+    # 2 — our own sensor
     sensor = wait_for_sensor(sid) if sid else None
     if sensor:
         name = sensor.get("model_name") or sensor.get("model_id") or ev_model
         if name:
+            effort = sensor.get("effort") or _effort_from_transcript(tpath)
             msg = t("session_start").format(
-                model=_describe(name, sensor.get("window"), sensor.get("effort"), t))
+                model=_describe(name, sensor.get("window"), effort, t))
             print(json.dumps({"systemMessage": "\U0001F9E0 " + msg}))
             return
 
-    # 2b — Modell bekannt, Fenster über Models API + Client-Regeln herleiten.
-    # Damit steht die Zeile auch dann vollständig da, wenn die Status-Line beim
-    # Start noch nicht gelaufen ist.
+    # 2b — model known, window resolved via the Models API plus the client rules.
+    # This keeps the line complete even when the status line has not run at
+    # startup, which is the normal case in an IDE.
     if ev_model:
         window = None
         try:
@@ -114,11 +128,12 @@ def main():
             ev_model = display_name(ev_model) or ev_model
         except Exception:
             pass
-        msg = t("session_start").format(model=_describe(ev_model, window, None, t))
+        msg = t("session_start").format(
+            model=_describe(ev_model, window, _effort_from_transcript(tpath), t))
         print(json.dumps({"systemMessage": "\U0001F9E0 " + msg}))
         return
 
-    # 3 — Vorschau aus der letzten Session, klar als solche gekennzeichnet
+    # 3 — preview from the last session, clearly marked as such
     last = read_sensor(None, allow_last=True)
     if last and last.get("session_id") != sid:
         age = sensor_age(last)
@@ -129,7 +144,7 @@ def main():
             print(json.dumps({"systemMessage": "\U0001F9E0 " + msg}))
             return
 
-    # Nichts Belastbares — dann lieber schweigen.
+    # Nothing solid — better to stay quiet.
 
 
 if __name__ == "__main__":

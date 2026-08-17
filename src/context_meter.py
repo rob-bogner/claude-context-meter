@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""claude-context-meter — der Stop-Hook (Renderer).
+"""claude-context-meter — the Stop hook (renderer).
 
-Feuert nach jeder Assistant-Antwort und zeigt ein kompaktes Dashboard:
+Fires after every assistant reply and prints a compact dashboard:
 
-  🧠 Opus 5 · 1M Fenster · effort xhigh
-  🟢 Kontext 🟩🟩🟩🟨⬛…  20% · 201k/1M · 💰 $0.42 · ⇡4 ungepusht
-  📊 Session 🟩🟩⬛…  10% (↻3h) · Woche 16% (↻5d)
-  💡 Alles im grünen Bereich
+  🧠 Opus 5 · 1M window · effort xhigh
+  🟢 Context 🟩🟩🟩🟨⬛…  20% · 201k/1M · 💰 $0.42 · ⇡4 unpushed
+  📊 Session 🟩🟩⬛…  10% (↻3h) · Week 16% (↻5d)
+  💡 All clear
 
-Diese Datei RECHNET nichts mehr selbst, wenn sie es messen kann: Fenstergröße,
-Tokens, Kosten, Modellname und Abo-Verbrauch kommen aus dem Sensor
-(`sensor.py`, registriert als Status-Line). `context.py` löst auf, welche Ebene
-der Kaskade greift; hier wird nur noch gerendert.
+This file COMPUTES nothing it can measure instead: window size, tokens, cost,
+model name and subscription usage come from the sensor (`sensor.py`, registered
+as the status line). `context.py` resolves which level of the cascade applies;
+this file only renders.
 
-Der zentrale Unterschied zu früheren Versionen: Ist die Fenstergröße NICHT
-gemessen, wird **keine Prozentzahl** ausgegeben — kein Farbband, kein Ton, keine
-Handoff-Empfehlung. Eine Prozentzahl ohne bekanntes Fenster ist eine Behauptung,
-und genau die hat früher Fehlalarme ausgelöst ("100% · 201k/200k", während real
-20% eines 1M-Fensters belegt waren).
+The central difference to earlier versions: if the window size is NOT measured,
+**no percentage** is printed — no colour band, no sound, no handoff advice. A
+percentage without a known window is a claim, and that claim is what used to
+raise false alarms ("100% · 201k/200k" while 20% of a 1M window was actually
+in use).
 
-Ohne Sensor läuft nichts kaputt, es wird nur ehrlich weniger behauptet:
+Nothing breaks without a sensor; it simply claims less, honestly:
 
-  ⚪ Kontext 201k geladen · Fenster unbekannt (≥1M)
-  💡 Status-Line nicht aktiv — `context-meter doctor` ausführen
+  ⚪ Context 201k loaded · window unknown (≥1M)
+  💡 Status line inactive — run `doctor`
 
-Wie der Block in den Chat kommt: Ein Stop-Hook darf {"decision":"block", ...}
-zurückgeben; Claude Code setzt den Turn dann fort und der Assistent gibt den
-Block aus. Der `stop_hook_active`-Guard verhindert die Endlosschleife.
+How the block reaches the chat: a Stop hook may return {"decision":"block", ...};
+Claude Code then continues the turn and the assistant prints the block. The
+`stop_hook_active` guard prevents the endless loop.
 """
 import sys, os, json, subprocess, time
 
@@ -41,7 +41,7 @@ except Exception:                                   # pragma: no cover
         return lambda k: k
 
 try:
-    from usage import get_usage, fmt_reset          # nur noch Fallback ohne Sensor
+    from usage import get_usage, fmt_reset          # fallback only, when no sensor runs
 except Exception:
     def get_usage():
         return None
@@ -54,39 +54,39 @@ BASE_DIR = os.path.join(HOME, ".claude", "context-meter")
 CONFIG_PATH = os.environ.get("CONTEXT_METER_CONFIG", os.path.join(BASE_DIR, "config.json"))
 
 # ---------------------------------------------------------------------------
-# Konfiguration
+# Configuration
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     "language": "en",
-    # Schwellen in Prozent des ECHTEN Fensters. Ab jetzt beziehen sie sich auf
-    # die gemessene Fenstergröße statt auf einen angenommenen 200k-Nenner: bei
-    # 1M bedeutet 15 % also 150k geladene Token.
-    "bands": [15, 30, 45],          # grün <15 · gelb 15–30 · orange 30–45 · rot ≥45
-    "display_min_tokens": 6000,     # unterhalb dieser absoluten Last: still bleiben
-    "segments": 20,                 # Balkenlänge (20 × 5 % = 5 % Auflösung)
-    # Wie der Block in den Chat kommt:
-    #   "auto"   — Client erkennen (empfohlen): IDE-Erweiterungen rendern
-    #              decision:block als saubere Chat-Blase; das Terminal zeigt
-    #              zusätzlich das Hook-Feedback, dort also systemMessage.
-    #   "block"  — immer decision:block.
-    #   "system" — immer systemMessage.
+    # Thresholds in percent of the REAL window. They now refer to the measured
+    # window size rather than an assumed 200k denominator: on 1M, 15% means
+    # 150k tokens loaded.
+    "bands": [15, 30, 45],          # green <15 · yellow 15–30 · orange 30–45 · red ≥45
+    "display_min_tokens": 6000,     # stay silent below this absolute load
+    "segments": 20,                 # bar length (20 × 5% = 5% resolution)
+    # How the block reaches the chat:
+    #   "auto"   — detect the client (recommended): IDE extensions render
+    #              decision:block as a clean chat bubble; the terminal also shows
+    #              the hook feedback, so systemMessage is used there.
+    #   "block"  — always decision:block.
+    #   "system" — always systemMessage.
     "output_mode": "auto",
     "clients": ["ide", "terminal"],
     "features": {
-        "model_line": True,         # Zeile 1: Modell + Fenster
+        "model_line": True,         # line 1: model + window
         "cost": True,
         "usage": True,
         "git_ahead": True,
         "sound": True,
     },
-    # Fenstergröße, falls kein Sensor läuft (Ebene S3 der Kaskade). 0 = aus.
-    # Nur setzen, wenn wirklich bekannt — eine falsche Zahl hier ist schlimmer
-    # als gar keine, weil sie wieder Prozente behauptet.
+    # Window size when no sensor runs (level S3 of the cascade). 0 = off.
+    # Only set this when it is genuinely known — a wrong number here is worse
+    # than none, because it claims percentages again.
     "window_override": 0,
     "sensor_fresh_secs": 90,
-    # USD pro Million Tokens — nur noch Fallback, wenn der Sensor keine Kosten
-    # liefert. Claude Code rechnet sonst selbst (cost.total_cost_usd).
-    # Cache-Writes werden nach TTL gewichtet: 5m = 1,25× Input, 1h = 2,0× Input.
+    # USD per million tokens — a fallback only, for when the sensor supplies no
+    # cost. Otherwise Claude Code does the maths itself (cost.total_cost_usd).
+    # Cache writes are weighted by TTL: 5m = 1.25× input, 1h = 2.0× input.
     "prices_per_mtok": {
         "default": {"input": 5.00, "output": 25.00},
         "fable":   {"input": 10.00, "output": 50.00},
@@ -164,7 +164,7 @@ def band_index(pct, bands):
 
 
 def gradient_bar(pct, bands, segments):
-    """Segmentbalken; jede gefüllte Zelle in der Farbe IHRER Zone, leer = ⬛."""
+    """Segmented bar; each filled cell in the colour of ITS zone, empty = ⬛."""
     g, y, o = bands
     pct = max(0, int(pct))
     filled = min(segments, (pct + 4) // 5)   # ceil(pct/5)
@@ -202,9 +202,14 @@ def fmt_window(w):
 
 
 # ---------------------------------------------------------------------------
-# Transcript — Rückfallebene, wenn kein Sensor läuft
+# Transcript — the fallback for when no sensor runs
 # ---------------------------------------------------------------------------
-def _iter_assistant_usages(path):
+def _iter_assistant_lines(path, needle=None):
+    """Every assistant line of the transcript, as (whole entry, message).
+
+    `needle` is a cheap pre-filter: skipping lines by substring before parsing
+    them as JSON matters on transcripts of several thousand entries.
+    """
     try:
         with open(path, "rb") as f:
             data = f.read().decode("utf-8", "replace")
@@ -212,15 +217,19 @@ def _iter_assistant_usages(path):
         return
     for line in data.splitlines():
         line = line.strip()
-        if not line or '"usage"' not in line:
+        if not line or (needle and needle not in line):
             continue
         try:
             d = json.loads(line)
         except Exception:
             continue
         m = d.get("message") or {}
-        if m.get("role") != "assistant":
-            continue
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            yield d, m
+
+
+def _iter_assistant_usages(path):
+    for _entry, m in _iter_assistant_lines(path, '"usage"'):
         u = m.get("usage")
         if isinstance(u, dict):
             yield m.get("model"), u
@@ -231,7 +240,7 @@ def _n(x):
 
 
 def last_context_tokens(path):
-    """Letzte Assistant-Usage = was real im Fenster liegt."""
+    """Last assistant usage = what is actually in the window."""
     last = None
     for _model, u in _iter_assistant_usages(path):
         tok = (_n(u.get("input_tokens"))
@@ -250,9 +259,25 @@ def last_model(path):
     return last
 
 
+def last_effort(path):
+    """Reasoning effort of the most recent assistant turn.
+
+    Claude Code records it as a top-level field on every assistant entry, so the
+    effort is available even when no sensor runs — which is the normal case in
+    an IDE, where no status line executes. Without this, line 1 silently lost
+    its effort suffix on every cascade level below S1.
+    """
+    last = None
+    for entry, _m in _iter_assistant_lines(path, '"effort"'):
+        e = entry.get("effort")
+        if isinstance(e, str) and e:
+            last = e
+    return last
+
+
 def _price_for(model_id, prices):
-    """Preise nach Modellfamilie. Nur für die Kosten-Rückfallebene — die
-    Fenstergröße wird NIE aus dem Namen abgeleitet."""
+    """Prices by model family. For the cost fallback only — the window size is
+    NEVER derived from the name."""
     mid = (model_id or "").lower()
     for key in ("fable", "mythos", "haiku", "sonnet"):
         if key in mid:
@@ -261,10 +286,10 @@ def _price_for(model_id, prices):
 
 
 def session_cost(path, prices):
-    """Geschätzte Session-Kosten (USD). Cache-Writes nach TTL gewichtet:
-    5-Minuten-Cache kostet das 1,25-fache des Input-Preises, 1-Stunden-Cache
-    das 2,0-fache. Claude Code schreibt praktisch ausschließlich 1h-Cache —
-    die frühere Pauschale von 1,25× unterschätzte die Kosten spürbar."""
+    """Estimated session cost (USD). Cache writes are weighted by TTL: a
+    5-minute cache costs 1.25× the input price, a 1-hour cache 2.0×. Claude Code
+    writes almost exclusively 1h cache — the earlier flat 1.25× noticeably
+    understated the cost."""
     total, found = 0.0, False
     for model, u in _iter_assistant_usages(path):
         p = _price_for(model, prices)
@@ -272,7 +297,7 @@ def session_cost(path, prices):
         cc = u.get("cache_creation") or {}
         h1 = _n(cc.get("ephemeral_1h_input_tokens"))
         h5 = _n(cc.get("ephemeral_5m_input_tokens"))
-        # Ältere Transcripts ohne Unterobjekt: pauschal als 5m werten.
+        # Older transcripts without the sub-object: count them all as 5m.
         if not h1 and not h5:
             h5 = _n(u.get("cache_creation_input_tokens"))
         total += (_n(u.get("input_tokens")) * pin
@@ -298,7 +323,7 @@ def git_ahead(cwd):
 
 
 # ---------------------------------------------------------------------------
-# Zeile 2 — Abo-Verbrauch
+# Line 2 — subscription usage
 # ---------------------------------------------------------------------------
 def _fmt_span(secs):
     if secs is None or secs <= 0:
@@ -313,8 +338,8 @@ def _fmt_span(secs):
 
 
 def usage_from_sensor(rate_limits, bands, segments, t):
-    """Bevorzugter Weg: die Status-Line liefert rate_limits mit — kein OAuth,
-    kein Keychain, kein HTTP-Call im Stop-Hook."""
+    """The preferred path: the status line delivers rate_limits along with
+    everything else — no OAuth, no keychain, no HTTP call inside the Stop hook."""
     if not rate_limits:
         return None
     now = time.time()
@@ -336,7 +361,7 @@ def usage_from_sensor(rate_limits, bands, segments, t):
 
 
 def usage_from_api(bands, segments, t):
-    """Rückfallebene ohne Sensor: der bisherige OAuth-Weg."""
+    """Fallback without a sensor: the original OAuth path."""
     try:
         u = get_usage()
     except Exception:
@@ -372,14 +397,16 @@ def play(sound):
 
 
 # ---------------------------------------------------------------------------
-# Block bauen
+# Building the block
 # ---------------------------------------------------------------------------
 def model_line(ctx, t):
-    """Zeile 1: welches Modell läuft, mit welchem Fenster.
+    """Line 1: which model is running, with which window.
 
-    Der Modellname darf auch aus dem Transcript stammen — er ist dort korrekt,
-    nur eben ohne Fensterinformation. Die Fenstergröße wird ausschließlich
-    angehängt, wenn sie gemessen oder deklariert ist."""
+    The model name may come from the transcript — it is correct there, just
+    without any window information. The window size is appended only when it has
+    been measured or declared. The effort comes from the sensor when there is
+    one, and from the transcript otherwise.
+    """
     name = ctx.model or t("model_unknown")
     bits = ["\U0001F9E0 %s" % name]                                    # 🧠
     if ctx.known:
@@ -390,16 +417,16 @@ def model_line(ctx, t):
 
 
 def context_line(ctx, cfg, t, cost, ahead):
-    """Zeile 2: Kontextlast. Mit gemessenem Fenster als Prozentbalken, ohne
-    Fenster als reine Zahl — keine Prozente, keine Farbe, kein Alarm."""
+    """Line 2: context load. With a measured window as a percentage bar, without
+    one as a plain number — no percentages, no colour, no alarm."""
     bands, segments = cfg["bands"], cfg["segments"]
 
     if ctx.known:
         pct = ctx.pct or 0
         emoji, _sound, hint = tier(pct, bands, t)
-        # "*" kennzeichnet ein deklariertes (nicht gemessenes) Fenster. Ein
-        # veralteter Sensor bekommt keinen Marker: die Fenstergröße ist auch
-        # dann gemessen, und sie ändert sich innerhalb einer Session nicht.
+        # "*" marks a declared (not measured) window. A stale sensor gets no
+        # marker: the window size is measured in that case too, and it does not
+        # change within a session.
         mark = "*" if ctx.confidence == "declared" else ""
         line = "%s %s %s %d%% · %s/%s%s" % (
             emoji, t("context"), gradient_bar(pct, bands, segments), pct,
@@ -438,7 +465,7 @@ def main():
         ev = json.load(sys.stdin)
     except Exception:
         return
-    # Loop-Schutz: nach unserem eigenen decision:block feuert der Hook erneut.
+    # Loop guard: after our own decision:block the hook fires again.
     if ev.get("stop_hook_active"):
         return
 
@@ -453,23 +480,25 @@ def main():
     t = translator(cfg.get("language"))
     feats = cfg.get("features", {})
 
-    # Transcript-Werte als Rückfallebene (Sensor gewinnt in resolve()).
-    tokens = model = None
+    # Transcript values as a fallback (the sensor wins inside resolve()).
+    tokens = model = effort = None
     if tpath and os.path.exists(tpath):
         tokens = last_context_tokens(tpath)
         if not tokens:
-            time.sleep(0.4)          # Transcript hinkt dem Turn kurz hinterher
+            time.sleep(0.4)          # the transcript lags the turn briefly
             tokens = last_context_tokens(tpath)
         model = last_model(tpath)
+        effort = last_effort(tpath)
 
-    ctx = resolve(sid, cfg=cfg, transcript_tokens=tokens, transcript_model=model)
+    ctx = resolve(sid, cfg=cfg, transcript_tokens=tokens, transcript_model=model,
+                  transcript_effort=effort)
 
     if not ctx.tokens:
         return
     if ctx.tokens < cfg.get("display_min_tokens", 6000):
         return
 
-    # Ton nur bei bekanntem Fenster und nur beim Hochwechsel in ein neues Band.
+    # Sound only with a known window, and only when moving up into a new band.
     if ctx.known and feats.get("sound", True):
         b = band_index(ctx.pct or 0, cfg["bands"])
         os.makedirs(STATE_DIR, exist_ok=True)

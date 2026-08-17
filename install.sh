@@ -86,7 +86,7 @@ if "sensor.py" in (sl.get("command") or ""):
     d.pop("statusLine", None)
     json.dump(d, open(p, "w"), indent=2, ensure_ascii=False)
     open(p, "a").write("\n")
-    print("  Status-Line auf Wunsch nicht registriert (--no-statusline)")
+    print("  Status line not registered, as requested (--no-statusline)")
 PY
 fi
 
