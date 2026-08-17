@@ -77,7 +77,9 @@ line is wrapped rather than replaced, and unrelated hooks are left alone.
 your config.
 
 Upgrading from an earlier, differently-named version? Its Stop hook is replaced
-automatically — no flag needed, and you won't get two blocks.
+automatically — no flag needed, and you won't get two blocks. To start from a
+clean slate instead, run the same line with `--uninstall` first (see
+[Uninstalling](#uninstalling)).
 
 > ⚠️ Piping a script into `bash` runs remote code. To read it first:
 > `curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh -o bootstrap.sh`,
@@ -146,7 +148,7 @@ To drive the hook manually against your latest transcript:
 ```bash
 T=$(ls -t ~/.claude/projects/*/*.jsonl | head -1)
 printf '{"session_id":"t","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$T" "$PWD" \
-  | python3 ~/.claude/context-meter/context_meter.py
+  | python3 src/context_meter.py
 ```
 
 You should see a JSON object containing `"decision":"block"`.
@@ -169,10 +171,30 @@ Either way, the scripts are refreshed and your `config.json` is kept.
 
 ### Uninstalling
 
+Same one-liner as the install, with `--uninstall`:
+
 ```bash
-./uninstall.sh            # removes the hook, keeps files & config
-./uninstall.sh --purge    # also deletes ~/.claude/context-meter/
+curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --uninstall
 ```
+
+Add `--purge` to delete `~/.claude/context-meter/` (scripts, config, state) as
+well, or `--dry-run` to see what would change in `settings.json` without writing
+it. If you cloned manually, call the script directly:
+
+```bash
+./uninstall.sh            # deregisters everything, keeps files & config
+./uninstall.sh --purge    # also deletes ~/.claude/context-meter/
+./uninstall.sh --dry-run  # show the settings.json changes, write nothing
+```
+
+Either way it removes all three registrations — status line, Stop hook and
+SessionStart hook — and leaves every unrelated hook alone. A repository clone is
+never deleted; the uninstaller prints its path so you can remove it yourself.
+
+You do **not** need this before an update — re-running the install is enough (see
+[Updating](#updating)). Uninstall first only when you want a clean slate: it
+resets `settings.json` to the state before the install, and with `--purge` drops
+your `config.json` too.
 
 ## Configuration
 
@@ -276,7 +298,9 @@ sound, no handoff advice. A percentage without a known window is a claim, and th
 claim is exactly what produced a bogus *"100% · 201k/200k"* alarm in an earlier
 version.
 
-Run `python3 src/doctor.py` to see which level is active and why.
+Run the diagnosis to see which level is active and why:
+`python3 ~/.claude/context-meter/src/doctor.py` after the one-line install, or
+`python3 src/doctor.py` from a clone.
 
 ## Documentation
 
@@ -284,7 +308,8 @@ Run `python3 src/doctor.py` to see which level is active and why.
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — Stop-hook mechanics & window detection
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — every config key
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — when the block doesn't show
-- `python3 src/doctor.py` — live diagnosis of the cascade
+- `doctor.py` — live diagnosis of the cascade
+  (`python3 ~/.claude/context-meter/src/doctor.py`)
 
 ## License
 
