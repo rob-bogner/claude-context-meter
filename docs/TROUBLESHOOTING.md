@@ -7,7 +7,7 @@ Work down this list.
 
 **1. Is the hook registered?**
 ```bash
-jq '.hooks.Stop' ~/.claude/settings.json
+python3 src/doctor.py
 ```
 You should see an entry whose command contains `context_meter.py`. If not, re-run
 `./install.sh`.
@@ -41,41 +41,50 @@ You installed over an **earlier version** that was registered under a different
 name (e.g. `session-context-alarm.py`). Both Stop hooks now fire, so you see two
 blocks — often in different languages or formats.
 
-The installer detects this and warns. To remove the earlier hook automatically:
+Re-run the installer — it replaces earlier context-meter Stop hooks automatically:
 
 ```bash
-./install.sh --replace-legacy
-# one-liner:
-curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --replace-legacy
+./install.sh
 ```
 
-To see what's registered and remove an old entry by hand:
+It matches on the script names this project has shipped under
+(`context_meter.py`, `session-context-alarm.py`, …) and leaves unrelated Stop
+hooks alone. To see what is registered:
 
 ```bash
-jq -r '.hooks.Stop[]?.hooks[]?.command' ~/.claude/settings.json
-# keep only context_meter.py, drop the rest (safe only if you have no other intentional Stop hooks):
-tmp=$(mktemp); jq '.hooks.Stop = ([.hooks.Stop[] | .hooks = ((.hooks//[]) | map(select(.command|contains("context_meter.py")))) ] | map(select((.hooks|length)>0)))' ~/.claude/settings.json > "$tmp" && mv "$tmp" ~/.claude/settings.json
+python3 -c "import json;print(json.dumps(json.load(open('$HOME/.claude/settings.json'))['hooks'],indent=2))"
 ```
 
-`--replace-legacy` only removes hooks whose command looks like a context meter
-(`context`/`ctx` + `alarm`/`meter`/`monitor`/…); unrelated Stop hooks are kept.
+`src/install_settings.py --uninstall` removes this project's entries and nothing
+else.
 
 ## The window is wrong (shows 200k on a 1M model, or vice versa)
 
-The hook maps the **transcript model id** to a window via `model_windows`. If your
-model isn't listed, it falls back to 200k (until observed tokens exceed 200k).
+Run the diagnosis first — it names the active cascade level and the reason:
 
-- Check which model your transcript records:
-  ```bash
-  T=$(ls -t ~/.claude/projects/*/*.jsonl | head -1)
-  jq -r 'select(.message.role=="assistant") | .message.model' "$T" | sort -u
-  ```
-- Add or correct the entry in `model_windows` in `config.json`. Keys are
-  case-insensitive substrings; put specific keys before generic ones.
+```bash
+python3 ~/GitPrivate/claude-context-meter/src/doctor.py "$CLAUDE_CODE_SESSION_ID"
+```
 
-If you run a terminal client that renders the status line, install it with
-`--with-statusline` — the sensor then feeds the hook the exact window and no
-mapping is needed.
+Typical outcomes:
+
+- **`S1 measured`** — the status line is feeding the sensor; the number is Claude
+  Code's own. Nothing to do.
+- **`S4 resolved`** — no sensor, but the window was resolved from the Models API
+  plus the client rules. Correct, though the sensor would also give you Claude
+  Code's token count and cost instead of the reconstructed ones. If the status
+  line is registered but never wrote, restart the client — the registration is
+  read at startup.
+- **`S5 unknown`** — the meter prints the token count without a percentage. Check
+  in this order: is a status line registered (`statusLine` in `settings.json`)?
+  Is an OAuth token in the Keychain (`doctor` reports it)? Is
+  `CLAUDE_CODE_DISABLE_1M_CONTEXT` or a custom `ANTHROPIC_BASE_URL` set? As a last
+  resort declare it: `{"window_override": 1000000}`.
+
+**The window looks too small.** Check whether `CLAUDE_CODE_DISABLE_1M_CONTEXT` is
+set, or whether `ANTHROPIC_BASE_URL` points somewhere other than
+`api.anthropic.com` — both cap the window at 200k by Claude Code's own rules, and
+the meter follows them. `doctor` prints both.
 
 ## Line 2 (subscription usage) is missing
 

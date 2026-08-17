@@ -6,29 +6,38 @@
 #   1. Copies src/*.py to ~/.claude/context-meter/
 #   2. Creates ~/.claude/context-meter/config.json from config.example.json
 #      (only if it does not exist yet — your settings are never overwritten)
-#   3. Registers the Stop hook in ~/.claude/settings.json (idempotent; leaves any
-#      other hooks untouched; backs up settings.json first)
-#   4. Warns if another Stop hook looks like an EARLIER context meter (a prior
-#      install under a different name) that would run alongside this one
-#   5. With --with-statusline: also wires up the optional status line
+#   3. Registers three entries in ~/.claude/settings.json, via
+#      src/install_settings.py (idempotent, backs up settings.json first):
+#        · statusLine   → the sensor. NOT optional: it is the only place Claude
+#                         Code exposes the real context window size. An existing
+#                         status line is wrapped, never replaced.
+#        · Stop         → the dashboard
+#        · SessionStart → the model line
+#      Earlier context-meter Stop hooks (including installs under a different
+#      name) are replaced; unrelated hooks are left untouched.
+#   4. Runs the self-check (src/doctor.py)
 #
 # Usage:
-#   ./install.sh [--with-statusline] [--timeout N] [--replace-legacy]
+#   ./install.sh [--no-statusline] [--in-place] [--dry-run]
 #
-#   --replace-legacy   remove detected earlier context-meter Stop hooks instead
-#                      of only warning about them
+#   --no-statusline  register hooks only. The meter then relies on the Models API
+#                    to resolve the window (cascade level S4) and degrades to a
+#                    plain token count where that is unavailable.
+#   --in-place       point the hooks at this checkout instead of copying to
+#                    ~/.claude/context-meter — `git pull` then updates the install.
+#   --dry-run        show what would change in settings.json, write nothing.
 #
-# Re-running is safe: it updates the existing entry instead of duplicating it.
+# Re-running is safe: entries are updated, not duplicated.
 set -euo pipefail
 
-WITH_STATUSLINE=0
-REPLACE_LEGACY=0
-TIMEOUT=10
+NO_STATUSLINE=0
+IN_PLACE=0
+DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --with-statusline) WITH_STATUSLINE=1; shift ;;
-    --replace-legacy) REPLACE_LEGACY=1; shift ;;
-    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --no-statusline) NO_STATUSLINE=1; shift ;;
+    --in-place)      IN_PLACE=1; shift ;;
+    --dry-run)       DRY_RUN=1; shift ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -37,21 +46,22 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 DEST="$CLAUDE_DIR/context-meter"
-SETTINGS="$CLAUDE_DIR/settings.json"
-HOOK_CMD="python3 \"$DEST/context_meter.py\""
-STATUSLINE_CMD="$DEST/context-meter-statusline.sh"
 
 # --- prerequisites ----------------------------------------------------------
+# No jq: settings.json is patched by install_settings.py (Python stdlib only).
 command -v python3 >/dev/null 2>&1 || { echo "❌ python3 not found" >&2; exit 1; }
-command -v jq >/dev/null 2>&1 || { echo "❌ jq not found (needed to patch settings.json safely)" >&2; exit 1; }
 
-echo "→ Installing claude-context-meter into $DEST"
-mkdir -p "$DEST/state"
-cp "$SCRIPT_DIR/src/context_meter.py" "$DEST/"
-cp "$SCRIPT_DIR/src/usage.py"         "$DEST/"
-cp "$SCRIPT_DIR/src/i18n.py"          "$DEST/"
-cp "$SCRIPT_DIR/statusline/context-meter-statusline.sh" "$DEST/"
-chmod +x "$DEST/context_meter.py" "$DEST/context-meter-statusline.sh"
+if [ "$IN_PLACE" -eq 1 ]; then
+  BASE="$SCRIPT_DIR"
+  echo "→ Installing in place: hooks will point at $BASE"
+  mkdir -p "$DEST/state"
+else
+  BASE="$DEST"
+  echo "→ Installing claude-context-meter into $DEST"
+  mkdir -p "$DEST/src" "$DEST/state"
+  cp "$SCRIPT_DIR"/src/*.py "$DEST/src/"
+  chmod +x "$DEST"/src/*.py
+fi
 
 # config.json: create from example only if absent (preserve user edits)
 if [ ! -f "$DEST/config.json" ]; then
@@ -61,74 +71,36 @@ else
   echo "→ Keeping existing config: $DEST/config.json"
 fi
 
-# --- patch settings.json (idempotent) ---------------------------------------
-[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-cp "$SETTINGS" "$SETTINGS.context-meter.bak"
-echo "→ Backed up settings to $SETTINGS.context-meter.bak"
+# --- register status line + hooks -------------------------------------------
+ARGS=("$BASE")
+[ "$DRY_RUN" -eq 1 ] && ARGS+=(--dry-run)
+python3 "$SCRIPT_DIR/src/install_settings.py" "${ARGS[@]}"
 
-tmp="$(mktemp)"
-jq --arg cmd "$HOOK_CMD" --argjson timeout "$TIMEOUT" '
-  # ensure hooks.Stop is an array
-  .hooks = (.hooks // {})
-  | .hooks.Stop = (.hooks.Stop // [])
-  # drop any prior context-meter entry (match by command substring), keep others
-  | .hooks.Stop = ([ .hooks.Stop[]
-      | .hooks = ((.hooks // []) | map(select(.command | contains("context_meter.py") | not)))
-    ] | map(select((.hooks | length) > 0)))
-  # append our fresh entry
-  | .hooks.Stop += [{ "matcher": "", "hooks": [
-      { "type": "command", "command": $cmd, "timeout": $timeout } ] }]
-' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-echo "→ Registered Stop hook"
-
-# --- optional status line ---------------------------------------------------
-if [ "$WITH_STATUSLINE" -eq 1 ]; then
-  tmp="$(mktemp)"
-  jq --arg cmd "$STATUSLINE_CMD" '
-    .statusLine = { "type": "command", "command": $cmd, "padding": 1 }
-  ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-  echo "→ Registered status line (sensor + display)"
+if [ "$NO_STATUSLINE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+  python3 - "$CLAUDE_DIR/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+sl = d.get("statusLine") or {}
+if "sensor.py" in (sl.get("command") or ""):
+    d.pop("statusLine", None)
+    json.dump(d, open(p, "w"), indent=2, ensure_ascii=False)
+    open(p, "a").write("\n")
+    print("  Status-Line auf Wunsch nicht registriert (--no-statusline)")
+PY
 fi
 
-# --- detect / handle earlier context-meter hooks ----------------------------
-# A previous version installed under a different name (e.g. session-context-alarm.py)
-# would keep firing next to ours -> two blocks. Detect Stop-hook commands that look
-# like a context meter (context/ctx + alarm/meter/monitor/gauge/hud) but are NOT
-# ours. --replace-legacy removes them; otherwise we only warn.
-LEGACY_RE='(context|ctx).*(alarm|meter|monitor|gauge|hud)'
-legacy=$(jq -r --arg re "$LEGACY_RE" '
-  .hooks.Stop[]?.hooks[]?.command
-  | select(test("context_meter\\.py") | not)
-  | select(test($re; "i"))
-' "$SETTINGS" 2>/dev/null | sort -u || true)
-
-if [ -n "$legacy" ]; then
-  if [ "$REPLACE_LEGACY" -eq 1 ]; then
-    tmp="$(mktemp)"
-    jq --arg re "$LEGACY_RE" '
-      .hooks.Stop = ([ .hooks.Stop[]
-        | .hooks = ((.hooks // []) | map(select(
-            (.command | test("context_meter\\.py"))          # keep ours
-            or ((.command | test($re; "i")) | not)           # keep anything not meter-like
-          )))
-      ] | map(select((.hooks | length) > 0)))
-    ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-    echo "→ Removed earlier context-meter Stop hook(s):"
-    echo "$legacy" | sed 's/^/    /'
-  else
-    echo ""
-    echo "⚠️  Another Stop hook looks like an EARLIER context meter and will run"
-    echo "    alongside this one (you'd see two blocks per reply):"
-    echo "$legacy" | sed 's/^/      /'
-    echo "    Re-run with --replace-legacy to remove it, or delete it by hand."
-  fi
-fi
+[ "$DRY_RUN" -eq 1 ] && exit 0
 
 # --- verify -----------------------------------------------------------------
-python3 -m py_compile "$DEST/context_meter.py" "$DEST/usage.py" "$DEST/i18n.py"
-jq empty "$SETTINGS" && echo "→ settings.json is valid JSON"
+python3 -m py_compile "$BASE"/src/*.py
+python3 -c "import json,sys; json.load(open('$CLAUDE_DIR/settings.json')); print('→ settings.json is valid JSON')"
 
 echo ""
-echo "✅ Done. Start a new Claude Code session (or send a message) — the context"
-echo "   block appears after the assistant's reply."
+python3 "$BASE/src/doctor.py" || true
+
+echo ""
+echo "✅ Done. Send a message — the block appears after the assistant's reply."
+echo "   The sensor writes on the next assistant message; if the status line"
+echo "   never runs, restart the client (the registration is read at startup)."
 echo "   Edit $DEST/config.json to change language, thresholds, or features."

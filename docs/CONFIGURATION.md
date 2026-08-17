@@ -75,29 +75,39 @@ shorter bar.
 Set any to `false` to drop that piece. `usage: false` also means the tool never
 touches the network or Keychain.
 
-### `model_windows` — object `{ "<substring>": <tokens> }`
-Maps a model to its context window. The key is matched as a **case-insensitive
-substring** of the transcript model id; the first match wins, so order matters —
-list specific keys before generic ones.
+### `use_models_api` — boolean (default `true`)
 
-```json
-"model_windows": {
-  "opus-4-8": 1000000,
-  "fable-5":  1000000,
-  "sonnet":   200000,
-  "haiku":    200000
-}
-```
+Resolve the model's capacity via Anthropic's Models API when no sensor is
+available (cascade level S4). Cached for 7 days per model id. Set `false` to work
+entirely offline — the meter then falls back to `window_override`, or to showing
+the token count without a percentage.
 
-When a new model ships, add a line here — no code change needed. See
-[HOW-IT-WORKS.md](HOW-IT-WORKS.md#2-window-detection-200k-vs-1m).
+Related: `allow_network` (default `true`) disables the lookup without discarding
+the cache.
+
+### `window_override` — integer (default `0`, off)
+
+Declare the context window yourself. Only useful when nothing can be measured and
+the Models API is unreachable. A wrong value here is worse than none, because it
+restores percentages that claim more than they know. `CONTEXT_METER_WINDOW`
+overrides it.
+
+There is deliberately **no** model→window mapping. Window sizes are measured or
+resolved from facts; a configured table silently rots with every new model.
+
+### `sensor_fresh_secs` — integer (default `90`)
+
+How long a status-line reading counts as fresh (cascade level S1). Older records
+still supply the window (S2) — that value cannot change within a session — while
+the token count is re-read from the transcript.
 
 ### `prices_per_mtok` — object, default = Opus 4.8
 USD per **million** tokens, used for the cost estimate:
 
 ```json
 "prices_per_mtok": {
-  "input": 5.00, "cache_write": 6.25, "cache_read": 0.50, "output": 25.00
+  "default": { "input": 5.00, "output": 25.00 },
+  "sonnet":  { "input": 3.00, "output": 15.00 }
 }
 ```
 

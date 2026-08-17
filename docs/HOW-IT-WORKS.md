@@ -70,48 +70,77 @@ and finding it is harder than it looks.
 - **Session metadata has `model: null`.** The `~/.claude/sessions/*.json` registry
   knows the session id and cwd, but not the model or window.
 - **The status line knows — but may not run.** Claude Code hands the status line
-  the exact `context_window.context_window_size` (200000 or 1000000). But the hook
-  never receives that field, and some clients (the current VS Code extension)
-  don't render a status line at all, so that channel can be empty.
+  the exact `context_window.context_window_size`. But no hook event receives that
+  field, and some clients (the current VS Code extension) don't render a status
+  line, so that channel can be empty.
 
-### The resolution order
+**A model-name lookup table cannot fix this.** It is wrong in both directions —
+the same family exists at 200k and at 1M — and it rots silently with every new
+model, because a miss produces no error, just a wrong number. An earlier version
+shipped exactly that table and displayed `100% · 201k/200k` with a red "hand off
+now" while 80% of a 1M window was still free.
 
-`read_window()` tries four sources, most-exact first:
+### The cascade
 
-1. **Sensor file** — if a status line ran, it wrote the real
-   `context_window_size` to `state/<session>.window`. Exact; wins outright.
-2. **Model → window map** — read the model from the transcript and map its family
-   to a window via `model_windows` in config (`opus-4-8 → 1000000`, `sonnet →
-   200000`, …). This is the normal path in the IDE, where no sensor file exists.
-3. **Empirical safety net** — the context can never hold more tokens than the
-   window is large. If observed tokens exceed 200k, the window must be at least the
-   next known tier (1M). This catches unknown/new models.
-4. **Fallback** — 200000, the conservative default.
+`context.resolve()` walks five levels, strict priority. A derivation never
+overrides a measurement.
+
+| | Source | Confidence | Renders |
+|---|---|---|---|
+| **S1** | sensor record for this session, fresh (≤ 90 s) | measured | percentage |
+| **S2** | sensor record for this session, stale | measured | percentage |
+| **S3** | `window_override` / `CONTEXT_METER_WINDOW` | declared | percentage + `*` |
+| **S4** | Models API capacity + client rules | resolved | percentage |
+| **S5** | nothing verifiable | unknown | **tokens only** |
+
+S2 is safe because a window size is fixed for a session's lifetime — only the
+token count is re-read from the transcript.
+
+### S4 — resolving from facts
+
+Two independent facts combine:
+
+**1. What can the model hold?** `GET /v1/models/{id}` returns `max_input_tokens`
+for the model id found in the transcript:
 
 ```
-sensor file?  ──yes──▶ use it
-     │no
-model in map? ──yes──▶ use mapped window
-     │no
-tokens > 200k?──yes──▶ lift to 1M (next tier)
-     │no
-   200k
+claude-opus-5      → 1000000
+claude-sonnet-5    → 1000000
+claude-haiku-4-5   →  200000
 ```
 
-The empirical net also runs *after* steps 1–2 as a floor: whatever window we
-picked, it is raised if the observed tokens wouldn't fit. So the meter can never
-show more than 100%.
+Authenticated with the same OAuth token Claude Code uses; cached 7 days. The
+`[1m]` variant is *not* an API model (404) — it is a client-side marker, so the
+base id is queried.
+
+**2. Does the client use that capacity?** `client_rules.py` reproduces Claude
+Code's own rule, de-minified from the shipped binary (v2.1.233):
+
+```
+[1m] in the model id                     → 1_000_000
+1M beta header + model supports it       → 1_000_000
+model in registry && first-party endpoint→ the model's full capacity
+otherwise                                →   200_000
+
+first-party = no ANTHROPIC_BASE_URL, or host == api.anthropic.com
+disabled by CLAUDE_CODE_DISABLE_1M_CONTEXT
+```
+
+The third rule is the one that matters in practice: on a first-party account every
+1M-capable model gets 1M — **without** `[1m]` in the name. That is why a session
+whose transcript says `claude-opus-5` really runs at 1M.
+
+Every input is checkable locally: hooks inherit the environment, the model id is in
+the transcript, the capacity comes from the API.
+
+**Empirical cross-check.** If the observed tokens exceed the resolved window, the
+resolution is too small (e.g. a model missing from the client registry). The window
+is then lifted to the next known tier and the rule is reported as `…+observed`, so
+the contradiction is visible rather than hidden.
 
 ### Adding a model
 
-When a new model ships, add one line to `model_windows` in `config.json`:
-
-```json
-"model_windows": { "opus-5": 1000000, "opus-4-8": 1000000, "sonnet": 200000 }
-```
-
-Keys are matched as case-insensitive substrings of the transcript model id, first
-match wins — so list more specific keys before generic ones.
+Nothing to do. There is no model list in this project.
 
 ## 3. Cost estimate
 

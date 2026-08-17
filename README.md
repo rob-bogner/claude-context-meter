@@ -63,29 +63,21 @@ never crash the hook):
 
 ### Quick install (one line)
 
-Requires `python3`, `jq`, and `git` (macOS or Linux; bash or zsh):
+Requires `python3` and `git` (macOS or Linux; bash or zsh):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash
 ```
 
-With the optional status line:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --with-statusline
-```
-
 That clones the repo to `~/.local/share/claude-context-meter`, runs the installer,
-and registers the hook. **Running the exact same command again updates** to the
-latest version and keeps your config. Then start a new session — the block appears
-after the assistant's next reply.
+and registers three things: the **status line** (the sensor), the **Stop hook**
+(the dashboard) and the **SessionStart hook** (the model line). An existing status
+line is wrapped rather than replaced, and unrelated hooks are left alone.
+**Running the exact same command again updates** to the latest version and keeps
+your config.
 
-Upgrading from an earlier, differently-named version and seeing **two blocks**?
-Add `--replace-legacy` to remove the old hook:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh | bash -s -- --replace-legacy
-```
+Upgrading from an earlier, differently-named version? Its Stop hook is replaced
+automatically — no flag needed, and you won't get two blocks.
 
 > ⚠️ Piping a script into `bash` runs remote code. To read it first:
 > `curl -fsSL https://raw.githubusercontent.com/rob-bogner/claude-context-meter/main/bootstrap.sh -o bootstrap.sh`,
@@ -98,8 +90,7 @@ Prefer to clone and inspect everything yourself? Do it in four steps.
 #### Step 0 — Check the prerequisites
 
 ```bash
-python3 --version     # any Python 3
-jq --version          # e.g. brew install jq
+python3 --version     # any Python 3 — standard library only
 claude --version      # Claude Code installed and logged in
 ```
 
@@ -116,18 +107,19 @@ cd claude-context-meter
 ./install.sh
 ```
 
-…or, if you use a terminal client that renders a status line and want the exact
-window sensor too:
+To point the hooks at this checkout instead of copying the files — `git pull` then
+updates the install:
 
 ```bash
-./install.sh --with-statusline
+./install.sh --in-place
 ```
 
-You can also set the hook timeout (seconds, default 10):
+Other flags: `--dry-run` shows the `settings.json` changes without writing them,
+`--no-statusline` skips the sensor (the meter then resolves the window from the
+Models API, cascade level S4).
 
-```bash
-./install.sh --timeout 15
-```
+The installer finishes by running `src/doctor.py`, which reports which cascade
+level is active and why.
 
 The installer:
 
@@ -146,7 +138,7 @@ Start a new Claude Code session (or just send a message). After the assistant
 replies, the context block appears. To confirm the hook is registered:
 
 ```bash
-jq '.hooks.Stop' ~/.claude/settings.json      # should list context_meter.py
+python3 src/doctor.py     # what's registered, which cascade level is active
 ```
 
 To drive the hook manually against your latest transcript:
