@@ -4,29 +4,30 @@
   "output_mode": "auto",
   "clients": ["ide", "terminal"],
 
-  "bands": [15, 30, 45],
+  "bands": [50, 70, 85],
   "display_min_tokens": 6000,
   "segments": 20,
 
   "features": {
+    "model_line": true,
     "cost": true,
     "usage": true,
     "git_ahead": true,
     "sound": true
   },
 
-  "model_windows": {
-    "opus-4-8": 1000000,
-    "fable-5": 1000000,
-    "sonnet": 200000,
-    "haiku": 200000
-  },
+  "sensor_fresh_secs": 90,
+
+  "use_models_api": true,
+  "allow_network": true,
+
+  "window_override": 0,
 
   "prices_per_mtok": {
-    "input": 5.00,
-    "cache_write": 6.25,
-    "cache_read": 0.50,
-    "output": 25.00
+    "default": { "input": 5.00, "output": 25.00 },
+    "fable":   { "input": 10.00, "output": 50.00 },
+    "sonnet":  { "input": 3.00, "output": 15.00 },
+    "haiku":   { "input": 1.00, "output": 5.00 }
   },
 
   "sounds": {

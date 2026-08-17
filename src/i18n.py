@@ -5,7 +5,8 @@ Every user-visible word lives here. Add a language by copying the "en" block,
 translating the values, and setting `"language": "<code>"` in config.json.
 
 Placeholders in the `instruction` string ({block}) are filled at runtime — keep
-them intact when translating.
+them intact when translating. Same for {tokens}, {floor} and {model} in the
+"unknown window" strings.
 """
 
 STRINGS = {
@@ -16,11 +17,22 @@ STRINGS = {
         "sonnet_week": "Sonnet",
         "unpushed": "unpushed",
         "reset_now": "now",
-        # Recommendation shown on line 3, keyed by tier (green/yellow/orange/red).
+        # Recommendation shown on the last line, keyed by tier.
         "hint_green": "All clear",
         "hint_yellow": "Keep an eye on it",
         "hint_orange": "Prepare a handoff",
         "hint_red": "Start a handoff / new session now",
+        # --- Model line (first line of the block) ---
+        "window_word": "window",
+        "model_unknown": "Model unknown",
+        # --- Unknown window: no percentage, no alarm, just facts ---
+        "ctx_unknown": "{tokens} loaded · window unknown",
+        "ctx_unknown_floor": "{tokens} loaded · window unknown (≥{floor})",
+        "hint_no_sensor": "Status line not active — run `context-meter doctor`",
+        "hint_stale": "sensor stale",
+        # --- Session start ---
+        "session_start": "Session on {model}",
+        "session_start_last": "Model is confirmed on the first reply (last session: {model})",
         # The instruction handed back to Claude. {block} is the rendered dashboard.
         "instruction": (
             "CONTEXT METER (automatic Stop hook). As your very next reply, output "
@@ -39,6 +51,14 @@ STRINGS = {
         "hint_yellow": "Im Blick behalten",
         "hint_orange": "Handoff vorbereiten",
         "hint_red": "Jetzt Handoff / neue Session starten",
+        "window_word": "Fenster",
+        "model_unknown": "Modell unbekannt",
+        "ctx_unknown": "{tokens} geladen · Fenster unbekannt",
+        "ctx_unknown_floor": "{tokens} geladen · Fenster unbekannt (≥{floor})",
+        "hint_no_sensor": "Status-Line nicht aktiv — `context-meter doctor` ausführen",
+        "hint_stale": "Sensor veraltet",
+        "session_start": "Session läuft auf {model}",
+        "session_start_last": "Modell wird mit der ersten Antwort bestätigt (zuletzt: {model})",
         "instruction": (
             "KONTEXT-METER (automatischer Stop-Hook). Gib dem Nutzer als deine nächste "
             "Antwort GENAU den folgenden Block (mehrere Zeilen) WORTWÖRTLICH aus und "

@@ -1,28 +1,38 @@
 #!/usr/bin/env python3
-"""claude-context-meter — a Claude Code Stop hook.
+"""claude-context-meter — der Stop-Hook (Renderer).
 
-Fires after every assistant reply and prints a compact, at-a-glance dashboard as
-the assistant's next message:
+Feuert nach jeder Assistant-Antwort und zeigt ein kompaktes Dashboard:
 
-  🟢 Context 🟩🟩🟩🟨🟨🟨🟧⬛…  32% · 318k/1M · 💰 $0.42 · ⇡4 unpushed
-  📊 Session 🟩🟩⬛…  10% (↻3h) · Week 16% (↻5d) · Sonnet 2% (↻5d)
-  💡 Keep an eye on it
+  🧠 Opus 5 · 1M Fenster · effort xhigh
+  🟢 Kontext 🟩🟩🟩🟨⬛…  20% · 201k/1M · 💰 $0.42 · ⇡4 ungepusht
+  📊 Session 🟩🟩⬛…  10% (↻3h) · Woche 16% (↻5d)
+  💡 Alles im grünen Bereich
 
-Line 1 (Context) is always shown. Line 2 (subscription usage) is optional and
-needs a valid OAuth token (see usage.py) — it is silently dropped otherwise.
-Line 3 is a one-line recommendation.
+Diese Datei RECHNET nichts mehr selbst, wenn sie es messen kann: Fenstergröße,
+Tokens, Kosten, Modellname und Abo-Verbrauch kommen aus dem Sensor
+(`sensor.py`, registriert als Status-Line). `context.py` löst auf, welche Ebene
+der Kaskade greift; hier wird nur noch gerendert.
 
-The window size (200k vs 1M) is detected WITHOUT relying on the status line —
-see read_window(). Everything visible is configurable via config.json; every word
-comes from i18n.py.
+Der zentrale Unterschied zu früheren Versionen: Ist die Fenstergröße NICHT
+gemessen, wird **keine Prozentzahl** ausgegeben — kein Farbband, kein Ton, keine
+Handoff-Empfehlung. Eine Prozentzahl ohne bekanntes Fenster ist eine Behauptung,
+und genau die hat früher Fehlalarme ausgelöst ("100% · 201k/200k", während real
+20% eines 1M-Fensters belegt waren).
 
-How the block reaches the chat: a Stop hook may return {"decision":"block", ...};
-Claude Code then continues the turn and the assistant emits the block. The
-`stop_hook_active` guard stops that from looping forever.
+Ohne Sensor läuft nichts kaputt, es wird nur ehrlich weniger behauptet:
+
+  ⚪ Kontext 201k geladen · Fenster unbekannt (≥1M)
+  💡 Status-Line nicht aktiv — `context-meter doctor` ausführen
+
+Wie der Block in den Chat kommt: Ein Stop-Hook darf {"decision":"block", ...}
+zurückgeben; Claude Code setzt den Turn dann fort und der Assistent gibt den
+Block aus. Der `stop_hook_active`-Guard verhindert die Endlosschleife.
 """
 import sys, os, json, subprocess, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from context import resolve, floor_for, diagnose, STATE_DIR  # noqa: E402
 
 try:
     from i18n import translator
@@ -31,7 +41,7 @@ except Exception:                                   # pragma: no cover
         return lambda k: k
 
 try:
-    from usage import get_usage, fmt_reset          # optional line 2
+    from usage import get_usage, fmt_reset          # nur noch Fallback ohne Sensor
 except Exception:
     def get_usage():
         return None
@@ -41,53 +51,49 @@ except Exception:
 
 HOME = os.path.expanduser("~")
 BASE_DIR = os.path.join(HOME, ".claude", "context-meter")
-STATE_DIR = os.path.join(BASE_DIR, "state")
 CONFIG_PATH = os.environ.get("CONTEXT_METER_CONFIG", os.path.join(BASE_DIR, "config.json"))
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Konfiguration
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     "language": "en",
-    "bands": [15, 30, 45],          # green <15 · yellow 15–30 · orange 30–45 · red ≥45
-    "display_min_tokens": 6000,     # stay silent below this absolute context load
-    "segments": 20,                 # bar length (20 × 5% = 5% resolution)
-    # How the block reaches the chat:
-    #   "auto"   — detect the client and pick the right mode (recommended):
-    #              IDE extensions render decision:block as a clean chat bubble;
-    #              the terminal CLI shows the hook feedback too, so it uses a
-    #              systemMessage instead to avoid a double block.
-    #   "block"  — always decision:block. Chat bubble in the IDE, but DOUBLES in
-    #              the terminal (the CLI shows the hook feedback and the reply).
-    #   "system" — always a systemMessage. Once in the terminal, but the IDE
-    #              extension renders it only partially.
+    # Schwellen in Prozent des ECHTEN Fensters. Frühere Versionen rechneten
+    # faktisch immer gegen 200k, weshalb dort viel niedrigere Werte sinnvoll
+    # schienen. Mit gemessenem Fenster gilt: bei 1M ist 50 % = 500k geladen —
+    # das ist der Punkt, an dem ein Handoff überhaupt erst ein Thema wird.
+    "bands": [50, 70, 85],          # grün <50 · gelb 50–70 · orange 70–85 · rot ≥85
+    "display_min_tokens": 6000,     # unterhalb dieser absoluten Last: still bleiben
+    "segments": 20,                 # Balkenlänge (20 × 5 % = 5 % Auflösung)
+    # Wie der Block in den Chat kommt:
+    #   "auto"   — Client erkennen (empfohlen): IDE-Erweiterungen rendern
+    #              decision:block als saubere Chat-Blase; das Terminal zeigt
+    #              zusätzlich das Hook-Feedback, dort also systemMessage.
+    #   "block"  — immer decision:block.
+    #   "system" — immer systemMessage.
     "output_mode": "auto",
-    # Where the block is shown at all. Values: "ide" (VS Code / JetBrains) and
-    # "terminal" (CLI, SSH, tmux…). Default is both. Set to ["ide"] to keep the
-    # block in the IDE only, or ["terminal"] for the terminal only.
     "clients": ["ide", "terminal"],
     "features": {
+        "model_line": True,         # Zeile 1: Modell + Fenster
         "cost": True,
         "usage": True,
         "git_ahead": True,
         "sound": True,
     },
-    # Substring of the transcript model id -> context window in tokens.
-    # First match wins, so list more specific keys first.
-    "model_windows": {
-        "opus-4-8": 1000000,
-        "fable-5": 1000000,
-        "sonnet": 200000,
-        "haiku": 200000,
-    },
-    # USD per million tokens. Defaults are Claude Opus 4.8 pricing.
+    # Fenstergröße, falls kein Sensor läuft (Ebene S3 der Kaskade). 0 = aus.
+    # Nur setzen, wenn wirklich bekannt — eine falsche Zahl hier ist schlimmer
+    # als gar keine, weil sie wieder Prozente behauptet.
+    "window_override": 0,
+    "sensor_fresh_secs": 90,
+    # USD pro Million Tokens — nur noch Fallback, wenn der Sensor keine Kosten
+    # liefert. Claude Code rechnet sonst selbst (cost.total_cost_usd).
+    # Cache-Writes werden nach TTL gewichtet: 5m = 1,25× Input, 1h = 2,0× Input.
     "prices_per_mtok": {
-        "input": 5.00,
-        "cache_write": 6.25,
-        "cache_read": 0.50,
-        "output": 25.00,
+        "default": {"input": 5.00, "output": 25.00},
+        "fable":   {"input": 10.00, "output": 50.00},
+        "haiku":   {"input": 1.00, "output": 5.00},
+        "sonnet":  {"input": 3.00, "output": 15.00},
     },
-    # macOS system sounds played on the up-transition into a band (null = silent).
     "sounds": {
         "orange": "/System/Library/Sounds/Tink.aiff",
         "red": "/System/Library/Sounds/Sosumi.aiff",
@@ -112,7 +118,6 @@ def load_config():
             cfg = _deep_merge(DEFAULTS, json.load(f))
     except Exception:
         pass
-    # Env overrides (handy for tests / one-off runs).
     if os.environ.get("CONTEXT_METER_LANG"):
         cfg["language"] = os.environ["CONTEXT_METER_LANG"]
     raw_bands = os.environ.get("CONTEXT_METER_BANDS")
@@ -126,25 +131,15 @@ def load_config():
     return cfg
 
 
-KNOWN_WINDOWS = (200_000, 1_000_000)   # known window tiers for the empirical safety net
-
-# IDE entrypoints that render decision:block as a clean chat bubble and do NOT
-# separately show the hook feedback. Everything else (terminal CLI, SSH, tmux…)
-# shows the feedback too, so we use systemMessage there. Matched as substrings of
-# CLAUDE_CODE_ENTRYPOINT (e.g. "claude-vscode").
 _IDE_ENTRYPOINTS = ("vscode", "jetbrains", "intellij", "pycharm", "idea")
 
 
 def current_client():
-    """'ide' (VS Code / JetBrains) or 'terminal' (everything else), from
-    CLAUDE_CODE_ENTRYPOINT (e.g. 'claude-vscode' -> 'ide', 'cli' -> 'terminal')."""
     ep = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").lower()
     return "ide" if any(k in ep for k in _IDE_ENTRYPOINTS) else "terminal"
 
 
 def resolve_output_mode(cfg):
-    """Return 'block' or 'system'. With output_mode="auto" (default), pick by the
-    client: IDE extension -> 'block', terminal -> 'system'. Explicit values win."""
     mode = cfg.get("output_mode", "auto")
     if mode in ("block", "system"):
         return mode
@@ -155,10 +150,9 @@ def resolve_output_mode(cfg):
 # Rendering
 # ---------------------------------------------------------------------------
 def tier(pct, bands, t):
-    """Leading emoji / sound-key / recommendation by context zone."""
     g, y, o = bands
     if pct >= o:
-        return ("\U0001F534", "red", t("hint_red"))       # 🔴
+        return ("\U0001F534", "red", t("hint_red"))        # 🔴
     if pct >= y:
         return ("\U0001F7E0", "orange", t("hint_orange"))  # 🟠
     if pct >= g:
@@ -167,37 +161,51 @@ def tier(pct, bands, t):
 
 
 def band_index(pct, bands):
-    """Number of thresholds crossed = band (0 green .. 3 red) — for sound de-dupe."""
     return sum(1 for th in bands if pct >= th)
 
 
 def gradient_bar(pct, bands, segments):
-    """Segmented bar; each filled cell colored for ITS OWN zone, empty = ⬛."""
+    """Segmentbalken; jede gefüllte Zelle in der Farbe IHRER Zone, leer = ⬛."""
     g, y, o = bands
     pct = max(0, int(pct))
-    filled = min(segments, (pct + 4) // 5)   # ceil(pct/5): a started 5% step counts full
+    filled = min(segments, (pct + 4) // 5)   # ceil(pct/5)
     out = []
     for i in range(1, segments + 1):
         if i > filled:
-            out.append("⬛")             # ⬛ empty track
+            out.append("⬛")
             continue
-        upper = i * 5                         # this cell's upper bound in %
+        upper = i * 5
         if upper <= g:
-            out.append("\U0001F7E9")          # 🟩 green
+            out.append("\U0001F7E9")          # 🟩
         elif upper <= y:
-            out.append("\U0001F7E8")          # 🟨 yellow
+            out.append("\U0001F7E8")          # 🟨
         elif upper <= o:
-            out.append("\U0001F7E7")          # 🟧 orange
+            out.append("\U0001F7E7")          # 🟧
         else:
-            out.append("\U0001F7E5")          # 🟥 red
+            out.append("\U0001F7E5")          # 🟥
     return "".join(out)
 
 
+def fmt_tokens(n):
+    if not n:
+        return "0"
+    if n >= 1_000_000:
+        return "%.1fM" % (n / 1_000_000)
+    return "%dk" % round(n / 1000)
+
+
+def fmt_window(w):
+    if not w:
+        return "?"
+    if w >= 1_000_000:
+        return "%gM" % (w / 1_000_000)
+    return "%dk" % (w // 1000)
+
+
 # ---------------------------------------------------------------------------
-# Transcript parsing
+# Transcript — Rückfallebene, wenn kein Sensor läuft
 # ---------------------------------------------------------------------------
 def _iter_assistant_usages(path):
-    """Yield every assistant message.usage object from the JSONL transcript."""
     try:
         with open(path, "rb") as f:
             data = f.read().decode("utf-8", "replace")
@@ -216,17 +224,17 @@ def _iter_assistant_usages(path):
             continue
         u = m.get("usage")
         if isinstance(u, dict):
-            yield u
+            yield m.get("model"), u
 
 
 def _n(x):
-    return x if isinstance(x, (int, float)) else 0
+    return x if isinstance(x, (int, float)) and not isinstance(x, bool) else 0
 
 
 def last_context_tokens(path):
-    """Last assistant usage = what is really loaded in the context window."""
+    """Letzte Assistant-Usage = was real im Fenster liegt."""
     last = None
-    for u in _iter_assistant_usages(path):
+    for _model, u in _iter_assistant_usages(path):
         tok = (_n(u.get("input_tokens"))
                + _n(u.get("cache_read_input_tokens"))
                + _n(u.get("cache_creation_input_tokens")))
@@ -236,88 +244,48 @@ def last_context_tokens(path):
 
 
 def last_model(path):
-    """Model id of the last real assistant message (ignoring <synthetic>)."""
-    try:
-        with open(path, "rb") as f:
-            data = f.read().decode("utf-8", "replace")
-    except Exception:
-        return None
     last = None
-    for line in data.splitlines():
-        line = line.strip()
-        if not line or '"model"' not in line:
-            continue
-        try:
-            d = json.loads(line)
-        except Exception:
-            continue
-        m = d.get("message") or {}
-        if m.get("role") == "assistant":
-            mm = m.get("model")
-            if isinstance(mm, str) and mm and mm != "<synthetic>":
-                last = mm
+    for model, _u in _iter_assistant_usages(path):
+        if isinstance(model, str) and model and model != "<synthetic>":
+            last = model
     return last
 
 
-def read_window(sid, transcript, model_windows, observed_tokens=0):
-    """Resolve the context window in priority order — status-line independent.
-
-    Why not read the model from settings: Claude Code does not persist the active
-    model anywhere a hook can read, and the transcript stores the base id WITHOUT the
-    "[1m]" marker (e.g. "claude-opus-4-8"). So we map the model FAMILY to its window.
-
-      1) Status-line sensor file (if present, e.g. terminal client): the exact
-         context_window_size Claude Code hands the status line — takes precedence.
-      2) Model from the transcript -> model_windows (the normal case in the IDE).
-      3) Empirical net: the context can never hold more tokens than the window is
-         large, so observed tokens lift the window to the next known tier.
-      4) Fallback 200000.
-    """
-    win = 0
-    try:
-        with open(os.path.join(STATE_DIR, sid + ".window")) as f:
-            win = int(f.read().strip() or "0")
-    except Exception:
-        win = 0
-
-    if win <= 0:
-        model = (last_model(transcript) or "").lower()
-        for key, w in model_windows.items():
-            if key.lower() in model:
-                win = int(w)
-                break
-
-    floor = 200_000
-    for k in KNOWN_WINDOWS:
-        if observed_tokens <= k:
-            floor = k
-            break
-    else:
-        floor = observed_tokens          # larger than any known tier
-
-    if win < floor:
-        win = floor
-    return win if win > 0 else 200_000
+def _price_for(model_id, prices):
+    """Preise nach Modellfamilie. Nur für die Kosten-Rückfallebene — die
+    Fenstergröße wird NIE aus dem Namen abgeleitet."""
+    mid = (model_id or "").lower()
+    for key in ("fable", "mythos", "haiku", "sonnet"):
+        if key in mid:
+            return prices.get(key if key != "mythos" else "fable", prices["default"])
+    return prices["default"]
 
 
 def session_cost(path, prices):
-    """Estimated session cost (USD) across all turns; None if nothing found."""
-    pin = prices["input"] / 1_000_000
-    pcw = prices["cache_write"] / 1_000_000
-    pcr = prices["cache_read"] / 1_000_000
-    pout = prices["output"] / 1_000_000
+    """Geschätzte Session-Kosten (USD). Cache-Writes nach TTL gewichtet:
+    5-Minuten-Cache kostet das 1,25-fache des Input-Preises, 1-Stunden-Cache
+    das 2,0-fache. Claude Code schreibt praktisch ausschließlich 1h-Cache —
+    die frühere Pauschale von 1,25× unterschätzte die Kosten spürbar."""
     total, found = 0.0, False
-    for u in _iter_assistant_usages(path):
+    for model, u in _iter_assistant_usages(path):
+        p = _price_for(model, prices)
+        pin, pout = p["input"] / 1e6, p["output"] / 1e6
+        cc = u.get("cache_creation") or {}
+        h1 = _n(cc.get("ephemeral_1h_input_tokens"))
+        h5 = _n(cc.get("ephemeral_5m_input_tokens"))
+        # Ältere Transcripts ohne Unterobjekt: pauschal als 5m werten.
+        if not h1 and not h5:
+            h5 = _n(u.get("cache_creation_input_tokens"))
         total += (_n(u.get("input_tokens")) * pin
-                  + _n(u.get("cache_creation_input_tokens")) * pcw
-                  + _n(u.get("cache_read_input_tokens")) * pcr
+                  + _n(u.get("cache_read_input_tokens")) * pin * 0.1
+                  + h5 * pin * 1.25
+                  + h1 * pin * 2.0
                   + _n(u.get("output_tokens")) * pout)
         found = True
     return total if found else None
 
 
 def git_ahead(cwd):
-    """Number of local commits not yet pushed (or None)."""
     if not cwd:
         return None
     try:
@@ -331,39 +299,66 @@ def git_ahead(cwd):
 
 
 # ---------------------------------------------------------------------------
-# Line 2 — subscription usage
+# Zeile 2 — Abo-Verbrauch
 # ---------------------------------------------------------------------------
-def _fmt_window(label, w, with_bar, bands, segments, t):
-    if not isinstance(w, dict):
+def _fmt_span(secs):
+    if secs is None or secs <= 0:
         return None
-    p = w.get("pct")
-    if not isinstance(p, (int, float)):
-        return None
-    p = int(round(p))
-    r = fmt_reset(w.get("resets_at", ""), t("reset_now"))
-    cd = " (↻%s)" % r if r else ""       # ↻ = cooldown until reset
-    if with_bar:
-        return "%s %s %d%%%s" % (label, gradient_bar(p, bands, segments), p, cd)
-    return "%s %d%%%s" % (label, p, cd)
+    mins = secs / 60
+    if mins < 60:
+        return "%dm" % max(1, round(mins))
+    hours = mins / 60
+    if hours < 24:
+        return "%dh" % round(hours)
+    return "%dd" % round(hours / 24)
 
 
-def usage_block(bands, segments, t):
-    """Line 2: Session (with bar) · Week · Sonnet, each with cooldown. None if no data."""
+def usage_from_sensor(rate_limits, bands, segments, t):
+    """Bevorzugter Weg: die Status-Line liefert rate_limits mit — kein OAuth,
+    kein Keychain, kein HTTP-Call im Stop-Hook."""
+    if not rate_limits:
+        return None
+    now = time.time()
+    parts = []
+    for key, label, with_bar in (("five_hour", t("session"), True),
+                                 ("seven_day", t("week"), False),
+                                 ("seven_day_sonnet", t("sonnet_week"), False)):
+        w = rate_limits.get(key)
+        if not isinstance(w, dict) or not isinstance(w.get("pct"), (int, float)):
+            continue
+        p = int(round(w["pct"]))
+        r = _fmt_span(w["resets_at"] - now) if isinstance(w.get("resets_at"), (int, float)) else None
+        cd = " (↻%s)" % (r or t("reset_now"))
+        if with_bar:
+            parts.append("%s %s %d%%%s" % (label, gradient_bar(p, bands, segments), p, cd))
+        else:
+            parts.append("%s %d%%%s" % (label, p, cd))
+    return "\U0001F4CA " + " · ".join(parts) if parts else None
+
+
+def usage_from_api(bands, segments, t):
+    """Rückfallebene ohne Sensor: der bisherige OAuth-Weg."""
     try:
         u = get_usage()
     except Exception:
         u = None
     if not u:
         return None
-    parts = [
-        _fmt_window(t("session"), u.get("five_hour"), True, bands, segments, t),
-        _fmt_window(t("week"), u.get("seven_day"), False, bands, segments, t),
-        _fmt_window(t("sonnet_week"), u.get("seven_day_sonnet"), False, bands, segments, t),
-    ]
-    parts = [p for p in parts if p]
-    if not parts:
-        return None
-    return "\U0001F4CA " + " · ".join(parts)
+    parts = []
+    for key, label, with_bar in (("five_hour", t("session"), True),
+                                 ("seven_day", t("week"), False),
+                                 ("seven_day_sonnet", t("sonnet_week"), False)):
+        w = u.get(key)
+        if not isinstance(w, dict) or not isinstance(w.get("pct"), (int, float)):
+            continue
+        p = int(round(w["pct"]))
+        r = fmt_reset(w.get("resets_at", ""), t("reset_now"))
+        cd = " (↻%s)" % r if r else ""
+        if with_bar:
+            parts.append("%s %s %d%%%s" % (label, gradient_bar(p, bands, segments), p, cd))
+        else:
+            parts.append("%s %d%%%s" % (label, p, cd))
+    return "\U0001F4CA " + " · ".join(parts) if parts else None
 
 
 def play(sound):
@@ -378,95 +373,141 @@ def play(sound):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Block bauen
 # ---------------------------------------------------------------------------
-def build_block(cfg, t, tokens, window, cost, ahead, usage_line):
-    bands = cfg["bands"]
-    segments = cfg["segments"]
-    pct = round(tokens / window * 100)
-    emoji, _sound_key, hint = tier(pct, bands, t)
+def model_line(ctx, t):
+    """Zeile 1: welches Modell läuft, mit welchem Fenster.
 
-    wl = "1M" if window >= 1_000_000 else "%dk" % (window // 1000)
-    tk = "%.1fM" % (tokens / 1_000_000) if tokens >= 1_000_000 else "%dk" % round(tokens / 1000)
-    line1 = "%s %s %s %d%% · %s/%s" % (
-        emoji, t("context"), gradient_bar(pct, bands, segments), pct, tk, wl)
+    Der Modellname darf auch aus dem Transcript stammen — er ist dort korrekt,
+    nur eben ohne Fensterinformation. Die Fenstergröße wird ausschließlich
+    angehängt, wenn sie gemessen oder deklariert ist."""
+    name = ctx.model or t("model_unknown")
+    bits = ["\U0001F9E0 %s" % name]                                    # 🧠
+    if ctx.known:
+        bits.append("%s %s" % (fmt_window(ctx.window), t("window_word")))
+    if ctx.effort:
+        bits.append("effort %s" % ctx.effort)
+    return " · ".join(bits)
+
+
+def context_line(ctx, cfg, t, cost, ahead):
+    """Zeile 2: Kontextlast. Mit gemessenem Fenster als Prozentbalken, ohne
+    Fenster als reine Zahl — keine Prozente, keine Farbe, kein Alarm."""
+    bands, segments = cfg["bands"], cfg["segments"]
+
+    if ctx.known:
+        pct = ctx.pct or 0
+        emoji, _sound, hint = tier(pct, bands, t)
+        # "*" kennzeichnet ein deklariertes (nicht gemessenes) Fenster. Ein
+        # veralteter Sensor bekommt keinen Marker: die Fenstergröße ist auch
+        # dann gemessen, und sie ändert sich innerhalb einer Session nicht.
+        mark = "*" if ctx.confidence == "declared" else ""
+        line = "%s %s %s %d%% · %s/%s%s" % (
+            emoji, t("context"), gradient_bar(pct, bands, segments), pct,
+            fmt_tokens(ctx.tokens), fmt_window(ctx.window), mark)
+    else:
+        tpl = "ctx_unknown_floor" if ctx.floor else "ctx_unknown"
+        body = t(tpl).format(tokens=fmt_tokens(ctx.tokens),
+                             floor=fmt_window(ctx.floor))
+        line = "⚪ %s %s" % (t("context"), body)                   # ⚪
+        hint = t("hint_no_sensor")
+
     if cost is not None:
-        line1 += " · \U0001F4B0 $%.2f" % cost
+        line += " · \U0001F4B0 $%.2f" % cost
     if ahead:
-        line1 += " · ⇡%d %s" % (ahead, t("unpushed"))
+        line += " · ⇡%d %s" % (ahead, t("unpushed"))
+    return line, hint
 
-    line3 = "\U0001F4A1 %s" % hint
-    lines = [line1] + ([usage_line] if usage_line else []) + [line3]
+
+def build_block(ctx, cfg, t, cost, ahead, usage_line):
+    lines = []
+    if cfg.get("features", {}).get("model_line", True):
+        lines.append(model_line(ctx, t))
+    line, hint = context_line(ctx, cfg, t, cost, ahead)
+    lines.append(line)
+    if usage_line:
+        lines.append(usage_line)
+    lines.append("\U0001F4A1 %s" % hint)                               # 💡
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
     try:
         ev = json.load(sys.stdin)
     except Exception:
         return
-    # Loop guard: after our own decision:block, the hook fires again with
-    # stop_hook_active=true -> do nothing (no second alarm/block).
+    # Loop-Schutz: nach unserem eigenen decision:block feuert der Hook erneut.
     if ev.get("stop_hook_active"):
         return
 
     sid = ev.get("session_id") or "unknown"
     tpath = ev.get("transcript_path")
     cwd = ev.get("cwd") or ""
-    if not tpath or not os.path.exists(tpath):
-        return
 
     cfg = load_config()
-    # Client gate: stay silent where the user doesn't want the block (e.g. ["ide"]).
     clients = cfg.get("clients") or ["ide", "terminal"]
     if isinstance(clients, list) and current_client() not in clients:
         return
     t = translator(cfg.get("language"))
-    bands = cfg["bands"]
     feats = cfg.get("features", {})
 
-    tokens = last_context_tokens(tpath)
-    if not tokens:
-        time.sleep(0.4)                  # race on the 1st turn: usage may not be written yet
+    # Transcript-Werte als Rückfallebene (Sensor gewinnt in resolve()).
+    tokens = model = None
+    if tpath and os.path.exists(tpath):
         tokens = last_context_tokens(tpath)
-    if not tokens:
+        if not tokens:
+            time.sleep(0.4)          # Transcript hinkt dem Turn kurz hinterher
+            tokens = last_context_tokens(tpath)
+        model = last_model(tpath)
+
+    ctx = resolve(sid, cfg=cfg, transcript_tokens=tokens, transcript_model=model)
+
+    if not ctx.tokens:
         return
-    if tokens < cfg.get("display_min_tokens", 6000):
+    if ctx.tokens < cfg.get("display_min_tokens", 6000):
         return
 
-    window = read_window(sid, tpath, cfg["model_windows"], tokens)
-    pct = round(tokens / window * 100)
-    b = band_index(pct, bands)
-
-    # Sound de-dupe: play only on the up-transition into a new band.
-    os.makedirs(STATE_DIR, exist_ok=True)
-    statef = os.path.join(STATE_DIR, sid + ".band")
-    prev = -1
-    try:
-        with open(statef) as f:
-            prev = int(f.read().strip() or "-1")
-    except Exception:
+    # Ton nur bei bekanntem Fenster und nur beim Hochwechsel in ein neues Band.
+    if ctx.known and feats.get("sound", True):
+        b = band_index(ctx.pct or 0, cfg["bands"])
+        os.makedirs(STATE_DIR, exist_ok=True)
+        statef = os.path.join(STATE_DIR, sid + ".band")
         prev = -1
-    try:
-        with open(statef, "w") as f:
-            f.write(str(b))
-    except Exception:
-        pass
+        try:
+            with open(statef) as f:
+                prev = int(f.read().strip() or "-1")
+        except Exception:
+            pass
+        try:
+            with open(statef, "w") as f:
+                f.write(str(b))
+        except Exception:
+            pass
+        _e, sound_key, _h = tier(ctx.pct or 0, cfg["bands"], t)
+        if b > prev and sound_key:
+            play(cfg.get("sounds", {}).get(sound_key))
 
-    _emoji, sound_key, _hint = tier(pct, bands, t)
-    if feats.get("sound", True) and b > prev and sound_key:
-        play(cfg.get("sounds", {}).get(sound_key))
+    cost = None
+    if feats.get("cost", True):
+        cost = ctx.cost
+        if cost is None and tpath and os.path.exists(tpath):
+            cost = session_cost(tpath, cfg["prices_per_mtok"])
 
-    cost = session_cost(tpath, cfg["prices_per_mtok"]) if feats.get("cost", True) else None
     ahead = git_ahead(cwd) if feats.get("git_ahead", True) else None
-    usage_line = usage_block(bands, cfg["segments"], t) if feats.get("usage", True) else None
 
-    block = build_block(cfg, t, tokens, window, cost, ahead, usage_line)
+    usage_line = None
+    if feats.get("usage", True):
+        usage_line = usage_from_sensor(ctx.rate_limits, cfg["bands"], cfg["segments"], t)
+        if not usage_line:
+            usage_line = usage_from_api(cfg["bands"], cfg["segments"], t)
+
+    block = build_block(ctx, cfg, t, cost, ahead, usage_line)
     if resolve_output_mode(cfg) == "block":
-        # IDE: assistant re-emits the block as a chat bubble (shown once there).
         out = {"decision": "block", "reason": t("instruction").format(block=block)}
     else:
-        # Terminal: one systemMessage; the assistant is not asked to repeat it.
         out = {"systemMessage": block}
     print(json.dumps(out))
 

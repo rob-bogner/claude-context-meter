@@ -6,16 +6,19 @@ full your context window is, what the session costs, and when it is time to hand
 off before you hit the wall.
 
 ```
+🧠 Claude Opus 5 · 1M window · effort xhigh
 🟢 Context 🟩🟩🟩🟨🟨🟨🟧⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛  32% · 318k/1M · 💰 $0.42 · ⇡4 unpushed
 📊 Session 🟩🟩⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛  10% (↻3h) · Week 16% (↻5d) · Sonnet 2% (↻5d)
 💡 Keep an eye on it
 ```
 
-- **Line 1 — Context:** used percentage, a 20-segment gradient bar, tokens vs. the
-  real window (`1M` or `200k`), estimated session cost, and unpushed commits.
-- **Line 2 — Usage** *(optional)*: your Claude subscription limits (5-hour session,
-  7-day week, 7-day Sonnet) with reset countdowns.
-- **Line 3 — Recommendation:** a one-liner that escalates from *All clear* to
+- **Line 1 — Model:** which model is actually running, its real context window,
+  and the effort level. Also shown at session start.
+- **Line 2 — Context:** used percentage, a 20-segment gradient bar, tokens vs. the
+  real window, estimated session cost, and unpushed commits.
+- **Line 3 — Usage** *(optional)*: your Claude subscription limits (5-hour session,
+  7-day week) with reset countdowns.
+- **Line 4 — Recommendation:** a one-liner that escalates from *All clear* to
   *Start a handoff now* as the context fills.
 
 The leading emoji and color escalate 🟢 → 🟡 → 🟠 → 🔴 across configurable
@@ -23,17 +26,21 @@ thresholds, with an optional macOS sound the moment you cross into a higher band
 
 ## Why
 
-Claude Code shows a context indicator, but it is easy to lose track mid-task — and
-if you run a **1M-token** model the built-in percentage can be misleading. This
-hook puts an honest, always-current readout right in the chat, and it detects the
-**real** window size (200k vs 1M) on its own. See
-[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the detection logic.
+Claude Code shows a context indicator, but it is easy to lose track mid-task. The
+hard part is the denominator: **no hook event carries the context window size**,
+and the model id in the transcript never carries the `[1m]` marker — so
+`claude-opus-5` names the 200k and the 1M variant alike. Guessing the window from
+the model name is wrong in both directions and silently rots with every new model.
+
+This hook doesn't guess. It resolves the window from facts, in a strict cascade —
+and where no fact is available it shows the raw token count instead of inventing a
+percentage. See [How the window is resolved](#how-the-window-is-resolved).
 
 ## Requirements
 
 - Claude Code (CLI, or the VS Code / JetBrains extension)
 - `python3` (standard library only — no pip installs)
-- `jq` and `git` (used by the installer)
+- `git` (used by the installer and for the ⇡ unpushed indicator)
 
 ## Platform support
 
@@ -189,15 +196,18 @@ change. Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | `language` | `"en"` | Output language (`en` / `de`; add your own in `i18n.py`) |
 | `output_mode` | `"auto"` | `"auto"` picks per client (IDE→bubble, terminal→systemMessage); force with `"block"` / `"system"` |
 | `clients` | `["ide","terminal"]` | Where the block shows at all. `["ide"]` = IDE only, `["terminal"]` = terminal only |
-| `bands` | `[15, 30, 45]` | Yellow / orange / red thresholds in % |
+| `bands` | `[50, 70, 85]` | Yellow / orange / red thresholds in % of the **real** window |
 | `display_min_tokens` | `6000` | Stay silent below this context load (absolute tokens) |
 | `segments` | `20` | Number of cells in the bar (20 = 5% resolution) |
 | `features.usage` | `true` | Show line 2 — subscription usage (needs an OAuth token; macOS) |
 | `features.cost` | `true` | Show 💰 session cost |
 | `features.git_ahead` | `true` | Show ⇡ unpushed commits |
 | `features.sound` | `true` | Play a sound on band-up (macOS) |
-| `model_windows` | see file | Map a model family → context window (200k / 1M) |
-| `prices_per_mtok` | Opus 4.8 | USD per million tokens, for the cost estimate |
+| `features.model_line` | `true` | Show the 🧠 model line |
+| `sensor_fresh_secs` | `90` | How long a status-line reading counts as fresh |
+| `use_models_api` | `true` | Resolve model capacity via Anthropic's Models API (cached 7 days) |
+| `window_override` | `0` | Declare the window yourself when nothing can be measured |
+| `prices_per_mtok` | per family | USD per million tokens — cost fallback when the sensor has none |
 | `sounds` | Tink / Sosumi | macOS sounds for the orange / red up-transition |
 
 ### Common tweaks
@@ -217,15 +227,16 @@ change. Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 { "features": { "usage": false, "sound": false, "cost": true, "git_ahead": true } }
 ```
 
-**Teach it a new model's window** (keys are case-insensitive substrings of the
-transcript model id, first match wins — list specific keys first):
+**Teach it a new model's window:** nothing to do. Window sizes are never
+configured — they are measured or resolved from Anthropic's Models API. If you
+work fully offline, declare it once instead:
 ```json
-{ "model_windows": { "opus-5": 1000000, "opus-4-8": 1000000, "sonnet": 200000 } }
+{ "window_override": 1000000 }
 ```
 
-**Price the cost estimate for a different model:**
+**Price the cost estimate for a different model family:**
 ```json
-{ "prices_per_mtok": { "input": 3.0, "cache_write": 3.75, "cache_read": 0.30, "output": 15.0 } }
+{ "prices_per_mtok": { "default": { "input": 3.0, "output": 15.0 } } }
 ```
 
 For quick experiments without editing the file, environment variables override it:
@@ -233,15 +244,47 @@ For quick experiments without editing the file, environment variables override i
 `CONTEXT_METER_CONFIG=/path/to/other.json`. See
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for every key and override.
 
-## How it works (in one paragraph)
+## How the window is resolved
 
-A Stop hook runs when the assistant finishes a turn. This one reads the session
-**transcript** to get the tokens currently in context and the model in use, maps
-the model to its window size, renders the block, and returns it via
-`{"decision":"block", ...}` — which Claude Code emits as the assistant's next
-message. A `stop_hook_active` guard prevents that from looping. The deep dive,
-including why the window is derived from the transcript and not the status line,
-is in [docs/](docs/).
+Five levels, strict priority, no backwards overriding — a derivation never
+corrects a measurement:
+
+| | Source | Confidence | Shows |
+|---|---|---|---|
+| **S1** | Status line sensor, fresh | measured | percentage |
+| **S2** | Status line sensor, stale (window is fixed for a session) | measured | percentage |
+| **S3** | `window_override` from config or `CONTEXT_METER_WINDOW` | declared | percentage + `*` |
+| **S4** | Models API capacity + Claude Code's own client rules | resolved | percentage |
+| **S5** | nothing verifiable | unknown | **token count only, no alarm** |
+
+**S1/S2 — the sensor.** The status line is the one place where Claude Code hands
+out `context_window.context_window_size`. `sensor.py` records it (plus tokens,
+model, cost and rate limits) as JSON; the hook only renders. Install it and the
+meter stops computing anything it can measure.
+
+**S4 — facts, not a table.** Without a sensor, two facts combine:
+`GET /v1/models/{id}` returns `max_input_tokens` for the transcript's model id,
+and `client_rules.py` reproduces Claude Code's own window rule (de-minified from
+the shipped binary) to decide whether the client uses that capacity:
+
+```
+[1m] in the model id                    → 1_000_000
+1M beta header + model supports it      → 1_000_000
+model in registry && first party        → 1_000_000
+otherwise                               →   200_000
+```
+
+Every input is checkable locally: env vars are inherited by the hook, the model id
+is in the transcript, the capacity comes from the API. **No model name appears
+anywhere in this project** — a future model resolves correctly with no update.
+
+**S5 — the honest floor.** If none of the above holds, the meter prints
+`⚪ Context 201k loaded · window unknown (≥1M)` — no percentage, no color band, no
+sound, no handoff advice. A percentage without a known window is a claim, and that
+claim is exactly what produced a bogus *"100% · 201k/200k"* alarm in an earlier
+version.
+
+Run `python3 src/doctor.py` to see which level is active and why.
 
 ## Documentation
 
@@ -249,6 +292,7 @@ is in [docs/](docs/).
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — Stop-hook mechanics & window detection
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — every config key
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — when the block doesn't show
+- `python3 src/doctor.py` — live diagnosis of the cascade
 
 ## License
 
