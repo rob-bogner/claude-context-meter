@@ -7,17 +7,25 @@ Or with pytest: pytest -q
 import os
 import sys
 import json
+import time
+import shutil
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "src"))
 
 import context_meter as cm  # noqa: E402
+import context as cx  # noqa: E402
 from i18n import translator  # noqa: E402
 
 BANDS = [15, 30, 45]
-MODEL_WINDOWS = {"opus-4-8": 1000000, "fable-5": 1000000, "sonnet": 200000, "haiku": 200000}
-PRICES = {"input": 5.0, "cache_write": 6.25, "cache_read": 0.5, "output": 25.0}
+# Prices are per model family, with a mandatory "default" fallback.
+PRICES = {"default": {"input": 5.0, "output": 25.0},
+          "sonnet": {"input": 3.0, "output": 15.0}}
+
+# No model-name table anywhere: the window is measured, declared or resolved.
+# Tests must never reach the network — `use_models_api: False` keeps S4 offline.
+OFFLINE = {"bands": BANDS, "segments": 20, "use_models_api": False}
 
 
 def _transcript(model="claude-opus-4-8", tokens=(2, 30000, 5000)):
@@ -71,58 +79,108 @@ def test_transcript_reads():
         os.remove(p)
 
 
-def test_read_window_model_mapping():
-    p = _transcript(model="claude-opus-4-8", tokens=(2, 30000, 5000))
-    try:
-        w = cm.read_window("nosession", p, MODEL_WINDOWS, 35002)
-        check("opus-4-8 -> 1M", w == 1_000_000)
-    finally:
-        os.remove(p)
-    p = _transcript(model="claude-sonnet-5", tokens=(2, 30000, 5000))
-    try:
-        w = cm.read_window("nosession", p, MODEL_WINDOWS, 35002)
-        check("sonnet -> 200k", w == 200_000)
-    finally:
-        os.remove(p)
+def _sensor(state_dir, session_id="sess", window=1_000_000, tokens=120_000, age=0.0,
+            **extra):
+    """Write a sensor reading the way src/sensor.py would."""
+    data = {"schema": 1, "session_id": session_id, "window": window,
+            "tokens_in": tokens, "ts": time.time() - age}
+    data.update(extra)
+    with open(os.path.join(state_dir, session_id + ".json"), "w") as f:
+        json.dump(data, f)
+    return data
 
 
-def test_read_window_empirical_net():
-    # Unknown model, but observed tokens exceed 200k -> must lift to 1M.
-    p = _transcript(model="claude-unknown-9", tokens=(2, 250000, 5000))
-    try:
-        w = cm.read_window("nosession", p, MODEL_WINDOWS, 255002)
-        check("unknown model, >200k tokens -> 1M", w == 1_000_000)
-    finally:
-        os.remove(p)
+class _State(object):
+    """Point context.STATE_DIR at a scratch directory for the duration."""
+
+    def __enter__(self):
+        self._orig = cx.STATE_DIR
+        self.dir = tempfile.mkdtemp()
+        cx.STATE_DIR = self.dir
+        return self.dir
+
+    def __exit__(self, *exc):
+        cx.STATE_DIR = self._orig
+        shutil.rmtree(self.dir, ignore_errors=True)
+        return False
 
 
-def test_read_window_sensor_precedence(tmp_state=None):
-    # Sensor file wins over model mapping.
-    orig = cm.STATE_DIR
-    d = tempfile.mkdtemp()
-    cm.STATE_DIR = d
-    try:
-        with open(os.path.join(d, "sess.window"), "w") as f:
-            f.write("200000")
-        p = _transcript(model="claude-opus-4-8", tokens=(2, 30000, 5000))
-        try:
-            w = cm.read_window("sess", p, MODEL_WINDOWS, 35002)
-            check("sensor file (200k) overrides opus mapping", w == 200_000)
-        finally:
-            os.remove(p)
-    finally:
-        cm.STATE_DIR = orig
+def test_cascade_s1_measured():
+    """A fresh sensor reading is the measurement — nothing may override it."""
+    with _State() as d:
+        _sensor(d, window=1_000_000, tokens=120_000, age=0)
+        ctx = cx.resolve("sess", OFFLINE, transcript_tokens=999, transcript_model="x")
+        check("S1 source is the status line", ctx.source == "statusline")
+        check("S1 confidence measured", ctx.confidence == "measured")
+        check("S1 window from sensor", ctx.window == 1_000_000)
+        check("S1 sensor tokens beat the transcript", ctx.tokens == 120_000)
+        check("S1 percentage", ctx.pct == 12)
+
+
+def test_cascade_s2_stale_keeps_window():
+    """A window cannot change mid-session, so a stale reading still carries it —
+    but the token count is taken from the transcript."""
+    with _State() as d:
+        _sensor(d, window=1_000_000, tokens=120_000, age=10_000)
+        ctx = cx.resolve("sess", OFFLINE, transcript_tokens=300_000, transcript_model="x")
+        check("S2 window survives", ctx.window == 1_000_000)
+        check("S2 marked stale", ctx.confidence == "measured_stale")
+        check("S2 tokens follow the transcript", ctx.tokens == 300_000)
+        check("S2 still counts as known", ctx.known)
+
+
+def test_cascade_sensor_of_foreign_session_ignored():
+    with _State() as d:
+        _sensor(d, session_id="other", window=1_000_000)
+        ctx = cx.resolve("mine", OFFLINE, transcript_tokens=50_000, transcript_model=None)
+        check("foreign sensor is not used", ctx.source != "statusline")
+
+
+def test_cascade_s3_declared():
+    with _State():
+        cfg = dict(OFFLINE, window_override=1_000_000)
+        ctx = cx.resolve("nosession", cfg, transcript_tokens=120_000, transcript_model="x")
+        check("S3 source is the override", ctx.source == "override")
+        check("S3 confidence declared", ctx.confidence == "declared")
+        check("S3 window honoured", ctx.window == 1_000_000)
+
+
+def test_cascade_s5_unknown_never_alarms():
+    """The regression that produced '100% · 201k/200k': with no verifiable
+    window, the meter must show a token count and no percentage at all."""
+    with _State():
+        ctx = cx.resolve("nosession", OFFLINE, transcript_tokens=201_000,
+                         transcript_model=None)
+        check("S5 confidence unknown", ctx.confidence == "unknown")
+        check("S5 is not 'known'", not ctx.known)
+        check("S5 has no percentage", ctx.pct is None)
+        line, hint = cm.context_line(ctx, OFFLINE, translator("en"), None, 0)
+        check("S5 line shows no percent sign", "%" not in line)
+        check("S5 reports the tokens", "201k" in line)
+
+
+def test_floor_is_a_lower_bound_only():
+    check("30k fits in 200k", cx.floor_for(30_000) == 200_000)
+    check("201k lifts to 1M", cx.floor_for(201_000) == 1_000_000)
+    check("beyond the tiers, tokens are the bound", cx.floor_for(3_000_000) == 3_000_000)
+    check("no tokens, no bound", cx.floor_for(0) is None)
 
 
 def test_build_block_en_de():
-    cfg = {"bands": BANDS, "segments": 20}
-    en = cm.build_block(cfg, translator("en"), 120000, 1000000, 0.42, 3, None)
-    check("en says Context", "Context" in en.splitlines()[0])
+    ctx = cx.Ctx(window=1_000_000, tokens=120_000, source="statusline",
+                 confidence="measured", model="Opus 5")
+    en = cm.build_block(ctx, OFFLINE, translator("en"), 0.42, 3, None)
+    check("en says Context", "Context" in en)
     check("en shows /1M", "/1M" in en)
     check("en unpushed label", "unpushed" in en)
-    de = cm.build_block(cfg, translator("de"), 120000, 1000000, 0.42, 3, None)
-    check("de says Kontext", "Kontext" in de.splitlines()[0])
+    de = cm.build_block(ctx, OFFLINE, translator("de"), 0.42, 3, None)
+    check("de says Kontext", "Kontext" in de)
     check("de unpushed label", "ungepusht" in de)
+
+    cfg_no_model = dict(OFFLINE, features={"model_line": False})
+    plain = cm.build_block(ctx, cfg_no_model, translator("en"), 0.42, 3, None)
+    check("model line can be switched off", not plain.splitlines()[0].startswith("\U0001F9E0"))
+    check("context line is then first", "Context" in plain.splitlines()[0])
 
 
 def test_cost():
@@ -131,6 +189,58 @@ def test_cost():
         c = cm.session_cost(p, PRICES)
         # 1000 input * $5/Mtok + 100 output * $25/Mtok = 0.005 + 0.0025
         check("cost math", abs(c - 0.0075) < 1e-9)
+    finally:
+        os.remove(p)
+
+
+def test_cost_picks_the_model_family():
+    """Prices are per family, matched on the id — the one place a model name is
+    read at all, and only ever for money, never for the window."""
+    p = _transcript(model="claude-sonnet-5", tokens=(1000, 0, 0))
+    try:
+        c = cm.session_cost(p, PRICES)
+        # sonnet: 1000 * $3/Mtok + 100 * $15/Mtok
+        check("sonnet is billed at sonnet rates", abs(c - (0.003 + 0.0015)) < 1e-9)
+    finally:
+        os.remove(p)
+    p = _transcript(model="claude-something-new-9", tokens=(1000, 0, 0))
+    try:
+        c = cm.session_cost(p, PRICES)
+        check("an unknown family falls back to default", abs(c - 0.0075) < 1e-9)
+    finally:
+        os.remove(p)
+
+
+def test_cost_weights_cache_writes_by_ttl():
+    """A 1-hour cache write costs 2x input, a 5-minute one 1.25x, and a cache
+    read a tenth. Claude Code writes almost exclusively 1h."""
+    def _usage(**cache):
+        line = {"message": {"role": "assistant", "model": "claude-opus-5",
+                            "usage": dict({"input_tokens": 0, "output_tokens": 0},
+                                          **cache)}}
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(line) + "\n")
+        return path
+
+    p = _usage(cache_creation={"ephemeral_1h_input_tokens": 1_000_000})
+    try:
+        check("1h cache write = 2x input", abs(cm.session_cost(p, PRICES) - 10.0) < 1e-9)
+    finally:
+        os.remove(p)
+    p = _usage(cache_creation={"ephemeral_5m_input_tokens": 1_000_000})
+    try:
+        check("5m cache write = 1.25x input", abs(cm.session_cost(p, PRICES) - 6.25) < 1e-9)
+    finally:
+        os.remove(p)
+    p = _usage(cache_read_input_tokens=1_000_000)
+    try:
+        check("cache read = 0.1x input", abs(cm.session_cost(p, PRICES) - 0.5) < 1e-9)
+    finally:
+        os.remove(p)
+    p = _usage(cache_creation_input_tokens=1_000_000)
+    try:
+        check("legacy field counts as 5m", abs(cm.session_cost(p, PRICES) - 6.25) < 1e-9)
     finally:
         os.remove(p)
 

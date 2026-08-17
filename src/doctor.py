@@ -72,11 +72,28 @@ def check_registration():
     return out, bool(statusline)
 
 
+def never_wrote():
+    """Hat der Sensor überhaupt schon einmal geschrieben? Ein leeres (oder
+    fehlendes) State-Verzeichnis heißt: die Status-Line lief seit ihrer
+    Registrierung nicht — direkt nach einer Installation der Normalfall, kein
+    Defekt. Liegen dort Dateien, nur nicht die gesuchte, ist es ein echter
+    Ausfall und wird auch so gemeldet."""
+    try:
+        return not any(n.endswith(".json") for n in os.listdir(STATE_DIR))
+    except OSError:
+        return True
+
+
 def check_sensor(sid):
     out = []
     sensor = read_sensor(sid, allow_last=True)
     if not sensor:
-        out.append("[%s] %-32s keine Datei in %s" % (BAD, "Sensordaten", STATE_DIR))
+        if never_wrote():
+            out.append("[%s] %-32s noch keine — Status-Line hat seit der "
+                       "Registrierung nicht geschrieben"
+                       % (WARN, "Sensordaten"))
+        else:
+            out.append("[%s] %-32s keine Datei in %s" % (BAD, "Sensordaten", STATE_DIR))
         return out, None
     age = sensor_age(sensor)
     fresh = age is not None and age <= FRESH_SECS
@@ -213,6 +230,12 @@ def main():
             print("  eigene Tokenzählung und Kosten statt der aus dem Transcript")
             print("  rekonstruierten. Läuft die Status-Line nicht an, hilft meist ein")
             print("  Neustart des Clients — die Registrierung wird beim Start gelesen.")
+        elif never_wrote():
+            print("→ Frisch eingerichtet: die Status-Line ist registriert, hat aber noch")
+            print("  nicht geschrieben. Das ist direkt nach der Installation normal —")
+            print("  Claude Code liest die Registrierung beim Start. Client neu starten,")
+            print("  dann eine Nachricht senden; danach liegt in")
+            print("  %s eine Datei und die Anzeige steht auf S1." % STATE_DIR)
         else:
             print("→ Status-Line ist registriert, hat aber nie geschrieben, und auch die")
             print("  Herleitung greift nicht. Prüfen, ob der Client die Status-Line")
