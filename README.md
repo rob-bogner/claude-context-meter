@@ -196,7 +196,7 @@ change. Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | `language` | `"en"` | Output language (`en` / `de`; add your own in `i18n.py`) |
 | `output_mode` | `"auto"` | `"auto"` picks per client (IDE→bubble, terminal→systemMessage); force with `"block"` / `"system"` |
 | `clients` | `["ide","terminal"]` | Where the block shows at all. `["ide"]` = IDE only, `["terminal"]` = terminal only |
-| `bands` | `[50, 70, 85]` | Yellow / orange / red thresholds in % of the **real** window |
+| `bands` | `[15, 30, 45]` | Yellow / orange / red thresholds in % of the **real** window |
 | `display_min_tokens` | `6000` | Stay silent below this context load (absolute tokens) |
 | `segments` | `20` | Number of cells in the bar (20 = 5% resolution) |
 | `features.usage` | `true` | Show line 2 — subscription usage (needs an OAuth token; macOS) |

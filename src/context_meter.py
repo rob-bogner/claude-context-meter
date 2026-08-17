@@ -58,11 +58,10 @@ CONFIG_PATH = os.environ.get("CONTEXT_METER_CONFIG", os.path.join(BASE_DIR, "con
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     "language": "en",
-    # Schwellen in Prozent des ECHTEN Fensters. Frühere Versionen rechneten
-    # faktisch immer gegen 200k, weshalb dort viel niedrigere Werte sinnvoll
-    # schienen. Mit gemessenem Fenster gilt: bei 1M ist 50 % = 500k geladen —
-    # das ist der Punkt, an dem ein Handoff überhaupt erst ein Thema wird.
-    "bands": [50, 70, 85],          # grün <50 · gelb 50–70 · orange 70–85 · rot ≥85
+    # Schwellen in Prozent des ECHTEN Fensters. Ab jetzt beziehen sie sich auf
+    # die gemessene Fenstergröße statt auf einen angenommenen 200k-Nenner: bei
+    # 1M bedeutet 15 % also 150k geladene Token.
+    "bands": [15, 30, 45],          # grün <15 · gelb 15–30 · orange 30–45 · rot ≥45
     "display_min_tokens": 6000,     # unterhalb dieser absoluten Last: still bleiben
     "segments": 20,                 # Balkenlänge (20 × 5 % = 5 % Auflösung)
     # Wie der Block in den Chat kommt:
