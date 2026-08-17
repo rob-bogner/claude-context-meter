@@ -3,20 +3,33 @@
 The hook is designed to fail silently, so "nothing happens" is the usual symptom.
 Work down this list.
 
+> **Paths in this document.** The commands below use `$CM`, the directory the
+> scripts actually live in. Set it once — this reads it back from the
+> registration itself, so it is right for every install variant:
+>
+> ```bash
+> CM=$(python3 -c "import json,os,shlex;s=json.load(open(os.path.expanduser('~/.claude/settings.json')));print(os.path.dirname(shlex.split(s['statusLine']['command'])[-1]))")
+> echo "$CM"
+> ```
+>
+> A default install reports `~/.claude/context-meter/src`; with `--in-place` it
+> reports your checkout. If it prints nothing, no status line is registered — run
+> the installer again.
+
 ## The block never appears
 
 **1. Is the hook registered?**
 ```bash
-python3 src/doctor.py
+python3 "$CM/doctor.py"
 ```
 You should see an entry whose command contains `context_meter.py`. If not, re-run
-`./install.sh`.
+the installer.
 
 **2. Does the hook run at all?** Drive it manually against a real transcript:
 ```bash
 T=$(ls -t ~/.claude/projects/*/*.jsonl | head -1)
 printf '{"session_id":"t","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$T" "$PWD" \
-  | python3 ~/.claude/context-meter/context_meter.py
+  | python3 "$CM/context_meter.py"
 ```
 Expected: a JSON object with `"decision":"block"`. If you get a Python traceback,
 that's the bug — file it with the trace.
@@ -52,18 +65,18 @@ It matches on the script names this project has shipped under
 hooks alone. To see what is registered:
 
 ```bash
-python3 -c "import json;print(json.dumps(json.load(open('$HOME/.claude/settings.json'))['hooks'],indent=2))"
+python3 -c "import json,os;print(json.dumps(json.load(open(os.path.expanduser('~/.claude/settings.json')))['hooks'],indent=2))"
 ```
 
-`src/install_settings.py --uninstall` removes this project's entries and nothing
-else.
+`python3 "$CM/install_settings.py" --uninstall` removes this project's entries and
+nothing else.
 
 ## The window is wrong (shows 200k on a 1M model, or vice versa)
 
 Run the diagnosis first — it names the active cascade level and the reason:
 
 ```bash
-python3 ~/GitPrivate/claude-context-meter/src/doctor.py "$CLAUDE_CODE_SESSION_ID"
+python3 "$CM/doctor.py" "$CLAUDE_CODE_SESSION_ID"
 ```
 
 Typical outcomes:
