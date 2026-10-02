@@ -221,6 +221,7 @@ change. Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | `sensor_fresh_secs` | `90` | How long a status-line reading counts as fresh |
 | `use_models_api` | `true` | Resolve model capacity via Anthropic's Models API (cached 7 days) |
 | `window_override` | `0` | Declare the window yourself when nothing can be measured |
+| `handoff_command` | `""` | Command appended to the orange/red handoff hints, e.g. `/mtk:handoff` |
 | `prices_per_mtok` | per family | USD per million tokens — cost fallback when the sensor has none |
 | `sounds` | Tink / Sosumi | macOS sounds for the orange / red up-transition |
 

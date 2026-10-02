@@ -73,6 +73,33 @@ def test_tier():
     check("red hint text (en)", cm.tier(60, BANDS, t)[2] == "Start a handoff / new session now")
 
 
+def test_handoff_command():
+    """The hint names a command only when one is configured - this is a public
+    tool, and a slash command from one person's plugin helps nobody else."""
+    t, de = translator("en"), translator("de")
+    check("no command by default", cm.tier(60, BANDS, t)[2] == "Start a handoff / new session now")
+    check("red hint takes the command",
+          cm.tier(60, BANDS, t, "/x:handoff")[2] == "Start a handoff / new session now \u2192 /x:handoff")
+    check("orange hint takes the command",
+          cm.tier(35, BANDS, t, "/x:handoff")[2] == "Prepare a handoff \u2192 /x:handoff")
+    check("de hint takes the command",
+          cm.tier(35, BANDS, de, "/x:handoff")[2] == "Handoff vorbereiten \u2192 /x:handoff")
+    check("yellow tier stays untouched", cm.tier(20, BANDS, t, "/x:handoff")[2] == "Keep an eye on it")
+    check("green tier stays untouched", cm.tier(5, BANDS, t, "/x:handoff")[2] == "All clear")
+    check("empty config = no suffix", cm.handoff_command({}) == "")
+    check("newlines squashed to one line",
+          cm.handoff_command({"handoff_command": "/x:handoff\nsecond line"}) == "/x:handoff second line")
+    check("non-string ignored", cm.handoff_command({"handoff_command": 42}) == "")
+    check("capped at 40 chars", len(cm.handoff_command({"handoff_command": "/" + "x" * 80})) == 40)
+    ctx = cx.Ctx(window=1_000_000, tokens=600_000, source="statusline",
+                 confidence="measured", model="claude-opus-5")
+    check("config value reaches the rendered line",
+          "\u2192 /x:handoff" in cm.context_line(
+              ctx, dict(OFFLINE, handoff_command="/x:handoff"), t, None, 0)[1])
+    check("without the key the rendered line has no arrow",
+          "\u2192" not in cm.context_line(ctx, OFFLINE, t, None, 0)[1])
+
+
 def test_transcript_reads():
     p = _transcript(tokens=(2, 30000, 5000))
     try:

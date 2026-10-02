@@ -6,7 +6,7 @@ translating the values, and setting `"language": "<code>"` in config.json.
 
 Placeholders in the `instruction` string ({block}) are filled at runtime — keep
 them intact when translating. Same for {tokens}, {floor} and {model} in the
-"unknown window" strings.
+"unknown window" strings, and {command} in "hint_command_suffix".
 """
 
 STRINGS = {
@@ -22,6 +22,8 @@ STRINGS = {
         "hint_yellow": "Keep an eye on it",
         "hint_orange": "Prepare a handoff",
         "hint_red": "Start a handoff / new session now",
+        # Appended to the two handoff hints when handoff_command is configured.
+        "hint_command_suffix": " \u2192 {command}",
         # --- Model line (first line of the block) ---
         "window_word": "window",
         "model_unknown": "Model unknown",
@@ -51,6 +53,7 @@ STRINGS = {
         "hint_yellow": "Im Blick behalten",
         "hint_orange": "Handoff vorbereiten",
         "hint_red": "Jetzt Handoff / neue Session starten",
+        "hint_command_suffix": " \u2192 {command}",
         "window_word": "Fenster",
         "model_unknown": "Modell unbekannt",
         "ctx_unknown": "{tokens} geladen · Fenster unbekannt",

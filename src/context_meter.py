@@ -83,6 +83,11 @@ DEFAULTS = {
     # Only set this when it is genuinely known — a wrong number here is worse
     # than none, because it claims percentages again.
     "window_override": 0,
+    # Command appended to the two handoff hints, e.g. "/mtk:handoff". Empty by
+    # default: the hint names the goal, and which command reaches it depends on
+    # the setup — a slash command from one person's plugin would be a dead end
+    # for everyone else.
+    "handoff_command": "",
     "sensor_fresh_secs": 90,
     # USD per million tokens — a fallback only, for when the sensor supplies no
     # cost. Otherwise Claude Code does the maths itself (cost.total_cost_usd).
@@ -148,12 +153,31 @@ def resolve_output_mode(cfg):
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
-def tier(pct, bands, t):
+def handoff_command(cfg):
+    """The command the handoff hints point to, from config.json.
+
+    Squashed to a single line and capped: the block is line-oriented, and one
+    stray newline from a hand-edited config would break its layout.
+    """
+    cmd = cfg.get("handoff_command") or ""
+    if not isinstance(cmd, str):
+        return ""
+    return " ".join(cmd.split())[:40]
+
+
+def _with_command(hint, command, t):
+    """Append the configured command to a handoff hint; unchanged without one."""
+    if not command:
+        return hint
+    return hint + t("hint_command_suffix").format(command=command)
+
+
+def tier(pct, bands, t, command=""):
     g, y, o = bands
     if pct >= o:
-        return ("\U0001F534", "red", t("hint_red"))        # 🔴
+        return ("\U0001F534", "red", _with_command(t("hint_red"), command, t))        # 🔴
     if pct >= y:
-        return ("\U0001F7E0", "orange", t("hint_orange"))  # 🟠
+        return ("\U0001F7E0", "orange", _with_command(t("hint_orange"), command, t))  # 🟠
     if pct >= g:
         return ("\U0001F7E1", None, t("hint_yellow"))      # 🟡
     return ("\U0001F7E2", None, t("hint_green"))           # 🟢
@@ -423,7 +447,7 @@ def context_line(ctx, cfg, t, cost, ahead):
 
     if ctx.known:
         pct = ctx.pct or 0
-        emoji, _sound, hint = tier(pct, bands, t)
+        emoji, _sound, hint = tier(pct, bands, t, handoff_command(cfg))
         # "*" marks a declared (not measured) window. A stale sensor gets no
         # marker: the window size is measured in that case too, and it does not
         # change within a session.

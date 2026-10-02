@@ -23,6 +23,8 @@
 
   "window_override": 0,
 
+  "handoff_command": "",
+
   "prices_per_mtok": {
     "default": { "input": 5.00, "output": 25.00 },
     "fable":   { "input": 10.00, "output": 50.00 },

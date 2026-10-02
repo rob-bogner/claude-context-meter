@@ -95,6 +95,24 @@ overrides it.
 There is deliberately **no** model→window mapping. Window sizes are measured or
 resolved from facts; a configured table silently rots with every new model.
 
+### `handoff_command` — string (default `""`, off)
+
+The orange and red hints name the goal — "Prepare a handoff" — but not the way
+there, because that depends on the setup: a slash command, a plugin, a habit.
+Set this to the command you actually use and it is appended to both hints:
+
+```json
+{ "handoff_command": "/mtk:handoff" }
+```
+
+```text
+💡 Prepare a handoff → /mtk:handoff
+```
+
+Left empty, both hints read exactly as before. The value is display text only —
+it is never executed — and is squashed to a single line and capped at 40
+characters, so a stray newline cannot break the block layout.
+
 ### `sensor_fresh_secs` — integer (default `90`)
 
 How long a status-line reading counts as fresh (cascade level S1). Older records
