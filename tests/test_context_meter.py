@@ -345,6 +345,25 @@ def test_client_and_output_mode():
             os.environ["CLAUDE_CODE_ENTRYPOINT"] = old
 
 
+def test_silent_for_supabuild_agent():
+    import subprocess
+    script = os.path.join(HERE, "..", "src", "context_meter.py")
+    env = dict(os.environ, SUPABUILD_AGENT="1")
+    tpath = _transcript(tokens=(2, 300000, 5000))
+    ev = json.dumps({"session_id": "agent-test", "transcript_path": tpath, "cwd": HERE})
+    try:
+        res = subprocess.run([sys.executable, script], input=ev, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True, timeout=10)
+    finally:
+        os.remove(tpath)
+    check("SUPABUILD_AGENT=1 -> exit 0", res.returncode == 0)
+    check("SUPABUILD_AGENT=1 -> no stdout", res.stdout == "")
+    check("SUPABUILD_AGENT=1 -> no stderr", res.stderr == "")
+    os.environ.pop("SUPABUILD_AGENT", None)
+    check("unset -> not silenced", not cm.silenced_for_agent())
+
+
 def run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

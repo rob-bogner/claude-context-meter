@@ -484,7 +484,18 @@ def build_block(ctx, cfg, t, cost, ahead, usage_line):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def silenced_for_agent():
+    """True when an unattended agent run asked for silence (SUPABUILD_AGENT=1).
+
+    Headless `claude -p` runs read the final result as data. The block would
+    force an extra turn and replace that result, so the hook stays out of them.
+    """
+    return os.environ.get("SUPABUILD_AGENT") == "1"
+
+
 def main():
+    if silenced_for_agent():
+        return
     try:
         ev = json.load(sys.stdin)
     except Exception:

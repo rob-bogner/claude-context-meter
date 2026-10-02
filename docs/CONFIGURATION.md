@@ -153,6 +153,7 @@ Handy for testing or a one-off run without editing the file:
 | `CONTEXT_METER_LANG` | `language` |
 | `CONTEXT_METER_BANDS` | `bands`, e.g. `"10,25,40"` |
 | `CONTEXT_METER_OAUTH_TOKEN` | OAuth token for line 2 (bypasses the Keychain) |
+| `SUPABUILD_AGENT` | Set to `1` to silence the Stop hook completely: it exits at once with code 0 and prints nothing. Meant for unattended `claude -p` runs that read the result as data. |
 
 ## Example: minimal, English, line 1 only
 

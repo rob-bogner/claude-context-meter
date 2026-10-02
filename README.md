@@ -258,6 +258,8 @@ For quick experiments without editing the file, environment variables override i
 `CONTEXT_METER_LANG=de`, `CONTEXT_METER_BANDS="10,25,40"`,
 `CONTEXT_METER_CONFIG=/path/to/other.json`. See
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for every key and override.
+Unattended `claude -p` runs can set `SUPABUILD_AGENT=1`; the Stop hook then
+exits at once and prints nothing, so it never replaces the run's result.
 
 ## How the window is resolved
 
